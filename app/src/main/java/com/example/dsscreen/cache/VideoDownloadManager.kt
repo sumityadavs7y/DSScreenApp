@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 
 /**
  * Manages downloading and caching of videos
@@ -25,6 +27,9 @@ class VideoDownloadManager(
     
     private val _downloadProgress = MutableStateFlow<Map<String, Int>>(emptyMap())
     val downloadProgress: StateFlow<Map<String, Int>> = _downloadProgress.asStateFlow()
+    
+    private var downloadJob: Job? = null
+    private val activeDownloads = mutableSetOf<String>()
 
     /**
      * Check if a video is cached
@@ -140,6 +145,104 @@ class VideoDownloadManager(
             Log.e(TAG, "❌ Error exporting cached video", e)
             return@withContext null
         }
+    }
+    
+    /**
+     * Pre-download a video to cache in background
+     */
+    suspend fun downloadVideoToCache(videoUrl: String, videoId: String): Boolean = withContext(Dispatchers.IO) {
+        if (isVideoCached(videoUrl)) {
+            Log.d(TAG, "Video already cached: $videoId")
+            updateDownloadProgress(videoId, 100)
+            return@withContext true
+        }
+        
+        if (activeDownloads.contains(videoId)) {
+            Log.d(TAG, "Video already downloading: $videoId")
+            return@withContext false
+        }
+        
+        activeDownloads.add(videoId)
+        Log.d(TAG, "Starting background download for: $videoId")
+        
+        try {
+            val dataSource = createCachedDataSourceFactory().createDataSource()
+            val dataSpec = androidx.media3.datasource.DataSpec(android.net.Uri.parse(videoUrl))
+            
+            dataSource.open(dataSpec)
+            
+            val buffer = ByteArray(64 * 1024) // 64KB buffer
+            var bytesRead: Int
+            var totalBytes = 0L
+            var lastProgressUpdate = 0
+            
+            while (isActive) {
+                bytesRead = dataSource.read(buffer, 0, buffer.size)
+                if (bytesRead == androidx.media3.common.C.RESULT_END_OF_INPUT) {
+                    break
+                }
+                totalBytes += bytesRead
+                
+                // Update progress every 5%
+                val progress = ((totalBytes / (10 * 1024 * 1024f)) * 100).toInt().coerceIn(0, 99) // Estimate
+                if (progress >= lastProgressUpdate + 5) {
+                    lastProgressUpdate = progress
+                    updateDownloadProgress(videoId, progress)
+                    Log.d(TAG, "Download progress for $videoId: $progress%")
+                }
+            }
+            
+            dataSource.close()
+            
+            updateDownloadProgress(videoId, 100)
+            activeDownloads.remove(videoId)
+            
+            Log.d(TAG, "✅ Successfully downloaded ${totalBytes / 1024 / 1024}MB for video: $videoId")
+            return@withContext true
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error downloading video: $videoId", e)
+            activeDownloads.remove(videoId)
+            updateDownloadProgress(videoId, 0)
+            return@withContext false
+        }
+    }
+    
+    /**
+     * Download multiple videos in sequence
+     */
+    suspend fun downloadVideosInBackground(videos: List<Pair<String, String>>) = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Starting background download for ${videos.size} videos")
+        
+        videos.forEach { (videoId, videoUrl) ->
+            if (!isActive) {
+                Log.d(TAG, "Download cancelled")
+                return@withContext
+            }
+            
+            if (!isVideoCached(videoUrl)) {
+                downloadVideoToCache(videoUrl, videoId)
+            } else {
+                updateDownloadProgress(videoId, 100)
+            }
+        }
+        
+        Log.d(TAG, "✅ All videos downloaded!")
+    }
+    
+    private fun updateDownloadProgress(videoId: String, progress: Int) {
+        val current = _downloadProgress.value.toMutableMap()
+        current[videoId] = progress
+        _downloadProgress.value = current
+    }
+    
+    /**
+     * Cancel all active downloads
+     */
+    fun cancelDownloads() {
+        downloadJob?.cancel()
+        activeDownloads.clear()
+        Log.d(TAG, "All downloads cancelled")
     }
 }
 

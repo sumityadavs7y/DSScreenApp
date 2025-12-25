@@ -30,6 +30,33 @@ class CacheViewModel(
     
     private val _overallProgress = MutableStateFlow(0f)
     val overallProgress: StateFlow<Float> = _overallProgress.asStateFlow()
+    
+    init {
+        // Monitor download progress and update cache status in real-time
+        viewModelScope.launch {
+            downloadManager.downloadProgress.collect { progressMap ->
+                val currentStatus = _videoCacheStatus.value.toMutableMap()
+                
+                progressMap.forEach { (videoId, progress) ->
+                    currentStatus[videoId]?.let {
+                        currentStatus[videoId] = it.copy(
+                            isCached = progress >= 100,
+                            progress = progress
+                        )
+                    }
+                }
+                
+                _videoCacheStatus.value = currentStatus
+                
+                // Update overall progress
+                val totalProgress = currentStatus.values.sumOf { it.progress }
+                val totalVideos = currentStatus.size
+                if (totalVideos > 0) {
+                    _overallProgress.value = (totalProgress.toFloat() / (totalVideos * 100f))
+                }
+            }
+        }
+    }
 
     /**
      * Get cached data source factory for ExoPlayer
@@ -37,7 +64,7 @@ class CacheViewModel(
     fun getCachedDataSourceFactory() = downloadManager.createCachedDataSourceFactory()
 
     /**
-     * Check cache status for all videos in playlist
+     * Check cache status for all videos in playlist and start background downloads
      */
     fun checkCacheStatus(playlist: Playlist, baseUrl: String) {
         viewModelScope.launch {
@@ -50,6 +77,7 @@ class CacheViewModel(
             
             val statusMap = mutableMapOf<String, VideoCacheInfo>()
             var totalCached = 0
+            val videosToDownload = mutableListOf<Pair<String, String>>()
             
             items.forEachIndexed { index, item ->
                 val videoId = item.video?.id ?: run {
@@ -66,7 +94,11 @@ class CacheViewModel(
                     progress = if (isCached) 100 else 0
                 )
                 
-                if (isCached) totalCached++
+                if (isCached) {
+                    totalCached++
+                } else {
+                    videosToDownload.add(videoId to videoUrl)
+                }
                 
                 Log.d(TAG, "  Video ${index + 1}/${items.size}: ${item.video?.fileName} - ${if (isCached) "✓ CACHED" else "○ Not cached"}")
             }
@@ -83,6 +115,38 @@ class CacheViewModel(
             Log.d(TAG, "Cache Summary: $totalCached/${items.size} videos cached (${(overallProg * 100).toInt()}%)")
             Log.d(TAG, "Cache map size: ${statusMap.size}")
             Log.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            
+            // Start background downloads for uncached videos
+            if (videosToDownload.isNotEmpty()) {
+                Log.d(TAG, "🚀 Starting background download for ${videosToDownload.size} videos...")
+                startBackgroundDownloads(videosToDownload)
+            }
+        }
+    }
+    
+    /**
+     * Start downloading videos in background
+     */
+    private fun startBackgroundDownloads(videos: List<Pair<String, String>>) {
+        viewModelScope.launch {
+            downloadManager.downloadVideosInBackground(videos)
+            
+            // After downloads complete, update cache status
+            videos.forEach { (videoId, videoUrl) ->
+                val isCached = downloadManager.isVideoCached(videoUrl)
+                val currentStatus = _videoCacheStatus.value.toMutableMap()
+                currentStatus[videoId]?.let {
+                    currentStatus[videoId] = it.copy(isCached = isCached, progress = if (isCached) 100 else 0)
+                }
+                _videoCacheStatus.value = currentStatus
+            }
+            
+            // Recalculate overall progress
+            val totalCached = _videoCacheStatus.value.values.count { it.isCached }
+            val totalVideos = _videoCacheStatus.value.size
+            _overallProgress.value = if (totalVideos > 0) totalCached.toFloat() / totalVideos.toFloat() else 0f
+            
+            Log.d(TAG, "✅ Background downloads complete! ${totalCached}/${totalVideos} cached")
         }
     }
 

@@ -173,7 +173,7 @@ fun PlayerScreen(
                     Text(
                         text = if (overallProgress >= 1f) 
                             "All videos cached. App will work offline." 
-                        else "Videos cache as they play. Play all videos once for full offline support.",
+                        else "Videos are downloading automatically in background for offline playback.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
