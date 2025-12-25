@@ -12,10 +12,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -23,6 +24,7 @@ import com.example.dsscreen.data.model.Playlist
 import com.example.dsscreen.data.model.PlaylistItem
 import com.example.dsscreen.viewmodel.CacheViewModel
 import com.example.dsscreen.viewmodel.DeviceViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun PlayerScreen(
@@ -57,6 +59,17 @@ fun PlayerScreen(
 
     val scrollState = rememberScrollState()
     val columnFocusRequester = remember { FocusRequester() }
+    val playbackButtonFocusRequester = remember { FocusRequester() }
+    val reregisterButtonFocusRequester = remember { FocusRequester() }
+    val coroutineScope = rememberCoroutineScope()
+    
+    var columnHasFocus by remember { mutableStateOf(true) }
+    
+    // Auto-focus column when screen loads
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(200)
+        columnFocusRequester.requestFocus()
+    }
 
     Box(
         modifier = Modifier
@@ -69,7 +82,40 @@ fun PlayerScreen(
                 .verticalScroll(scrollState)
                 .padding(32.dp)
                 .focusRequester(columnFocusRequester)
-                .focusable(),
+                .focusable()
+                .onFocusChanged { focusState ->
+                    columnHasFocus = focusState.isFocused
+                }
+                .onKeyEvent { keyEvent ->
+                    if (columnHasFocus && keyEvent.type == KeyEventType.KeyDown) {
+                        when (keyEvent.key) {
+                            Key.DirectionDown, Key.PageDown -> {
+                                val scrollAmount = if (keyEvent.key == Key.PageDown) 400 else 200
+                                coroutineScope.launch {
+                                    scrollState.animateScrollTo(
+                                        (scrollState.value + scrollAmount).coerceAtMost(scrollState.maxValue)
+                                    )
+                                }
+                                true
+                            }
+                            Key.DirectionUp, Key.PageUp -> {
+                                val scrollAmount = if (keyEvent.key == Key.PageUp) 400 else 200
+                                coroutineScope.launch {
+                                    scrollState.animateScrollTo(
+                                        (scrollState.value - scrollAmount).coerceAtLeast(0)
+                                    )
+                                }
+                                true
+                            }
+                            Key.Enter, Key.DirectionCenter -> {
+                                // Navigate to playback button when pressing center/enter
+                                playbackButtonFocusRequester.requestFocus()
+                                true
+                            }
+                            else -> false
+                        }
+                    } else false
+                },
             verticalArrangement = Arrangement.spacedBy(24.dp)
         ) {
             // Header
@@ -181,408 +227,135 @@ fun PlayerScreen(
                 }
             }
 
-            // Transcoding Status Card - Enhanced with error handling
+            // Transcoding Status Card
             if (transcodingJobs.isNotEmpty() || transcodedVideos.isNotEmpty()) {
-                val inProgressJobs = transcodingJobs.values.filter { it.status == com.example.dsscreen.transcoding.TranscodingStatus.IN_PROGRESS }
-                val completedJobs = transcodingJobs.values.filter { it.status == com.example.dsscreen.transcoding.TranscodingStatus.COMPLETED } + transcodedVideos.map { 
-                    com.example.dsscreen.transcoding.TranscodingJob(it, "", "", "", com.example.dsscreen.transcoding.TranscodingStatus.COMPLETED, 1f)
-                }
-                val failedJobs = transcodingJobs.values.filter { it.status == com.example.dsscreen.transcoding.TranscodingStatus.FAILED }
-                
-                val hasErrors = failedJobs.isNotEmpty()
-                val hasActive = inProgressJobs.isNotEmpty()
-                
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = when {
-                            hasErrors -> MaterialTheme.colorScheme.errorContainer
-                            !hasActive && completedJobs.isNotEmpty() -> MaterialTheme.colorScheme.tertiaryContainer
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
+                        containerColor = if (transcodingJobs.isEmpty()) 
+                            MaterialTheme.colorScheme.tertiaryContainer 
+                        else MaterialTheme.colorScheme.surfaceVariant
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(
                         modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Header
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = when {
-                                        hasErrors -> "⚠️ Video Conversion Issues"
-                                        hasActive -> "⟳ Converting Videos"
-                                        else -> "✓ Video Conversion Complete"
-                                    },
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = when {
-                                        hasErrors -> MaterialTheme.colorScheme.error
-                                        !hasActive -> MaterialTheme.colorScheme.tertiary
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                                
-                                // Summary counts
-                                val summaryParts = mutableListOf<String>()
-                                if (inProgressJobs.isNotEmpty()) summaryParts.add("${inProgressJobs.size} converting")
-                                if (completedJobs.isNotEmpty()) summaryParts.add("${completedJobs.size} completed")
-                                if (failedJobs.isNotEmpty()) summaryParts.add("${failedJobs.size} failed")
-                                
-                                if (summaryParts.isNotEmpty()) {
-                                    Text(
-                                        text = summaryParts.joinToString(" • "),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
+                            Text(
+                                text = if (transcodingJobs.isEmpty()) "✓ Video Conversion Complete" else "⟳ Converting Videos",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = if (transcodingJobs.isEmpty()) 
+                                    MaterialTheme.colorScheme.tertiary 
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             
-                            if (hasActive) {
+                            if (transcodingJobs.isNotEmpty()) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(28.dp),
-                                    strokeWidth = 3.dp,
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
                         
-                        // Device info
+                        // Show device optimal resolution
                         val (optWidth, optHeight) = transcodingViewModel.getDeviceOptimalResolution()
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "📱",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Column {
-                                    Text(
-                                        text = "Device Target: ${optWidth}x${optHeight}",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.SemiBold
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "High-resolution videos are automatically converted",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-                        }
+                        Text(
+                            text = "Target Resolution: ${optWidth}x${optHeight}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
                         
-                        // ACTIVE CONVERSIONS
-                        if (inProgressJobs.isNotEmpty()) {
-                            Divider()
+                        // Active transcoding jobs
+                        if (transcodingJobs.isNotEmpty()) {
+                            Text(
+                                text = "Converting (${transcodingJobs.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
                             
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "🔄",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Text(
-                                    text = "Converting Now",
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            
-                            inProgressJobs.forEach { job ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.surface
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
+                            transcodingJobs.values.forEach { job ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    Column(
-                                        modifier = Modifier.padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    Row(
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.Top
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.weight(1f),
-                                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Video ${job.videoId.take(8)}...",
-                                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                                        fontWeight = FontWeight.SemiBold
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
-                                                Text(
-                                                    text = "Target: ${job.targetResolution}",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                                )
-                                            }
-                                            
-                                            Text(
-                                                text = "${(job.progress * 100).toInt()}%",
-                                                style = MaterialTheme.typography.titleMedium.copy(
-                                                    fontWeight = FontWeight.Bold
-                                                ),
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        
-                                        LinearProgressIndicator(
-                                            progress = job.progress.coerceIn(0f, 1f),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(8.dp)
-                                                .clip(RoundedCornerShape(4.dp)),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                                        )
-                                        
-                                        if (job.progress > 0f) {
-                                            Text(
-                                                text = if (job.progress < 0.3f) "📥 Processing video..." 
-                                                       else if (job.progress < 0.7f) "🎬 Converting frames..." 
-                                                       else "✨ Finalizing...",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // COMPLETED CONVERSIONS
-                        if (completedJobs.isNotEmpty()) {
-                            Divider()
-                            
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "✅",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Text(
-                                    text = "Successfully Converted",
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                            }
-                            
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "${completedJobs.size}",
-                                        style = MaterialTheme.typography.headlineMedium.copy(
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = MaterialTheme.colorScheme.tertiary
-                                    )
-                                    Column {
                                         Text(
-                                            text = "video${if (completedJobs.size != 1) "s" else ""} ready",
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = FontWeight.SemiBold
-                                            ),
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = "Converted versions are now being used for smooth playback",
+                                            text = "Video ${job.videoId.take(8)}...",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${(job.progress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
+                                    androidx.compose.material3.LinearProgressIndicator(
+                                        progress = job.progress,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = Color(0xFFE0E0E0)
+                                    )
                                 }
                             }
                         }
                         
-                        // FAILED CONVERSIONS
-                        if (failedJobs.isNotEmpty()) {
-                            Divider()
+                        // Completed transcodings
+                        if (transcodedVideos.isNotEmpty()) {
+                            Text(
+                                text = "Completed (${transcodedVideos.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
                             
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "❌",
-                                    style = MaterialTheme.typography.bodyLarge
-                                )
-                                Text(
-                                    text = "Conversion Failed",
-                                    style = MaterialTheme.typography.labelLarge.copy(
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                            
-                            failedJobs.forEach { job ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                                    ),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "Video ${job.videoId.take(8)}...",
-                                                style = MaterialTheme.typography.bodyMedium.copy(
-                                                    fontWeight = FontWeight.SemiBold
-                                                ),
-                                                color = MaterialTheme.colorScheme.onErrorContainer
-                                            )
-                                            Surface(
-                                                color = MaterialTheme.colorScheme.error,
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "FAILED",
-                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.Bold
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.onError
-                                                )
-                                            }
-                                        }
-                                        
-                                        // Error message
-                                        val errorMessage = when {
-                                            job.error?.contains("resolution too high", ignoreCase = true) == true ->
-                                                "Video resolution is too high for this device to convert. Please use a lower resolution source video or test on a physical device."
-                                            job.error?.contains("decode", ignoreCase = true) == true ->
-                                                "Unable to decode video. The video format or codec may not be supported."
-                                            job.error?.contains("codec", ignoreCase = true) == true ->
-                                                "Codec error occurred. Your device may not support converting this video format."
-                                            job.error != null -> job.error
-                                            else -> "Conversion failed due to an unknown error."
-                                        }
-                                        
-                                        Surface(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Column(
-                                                modifier = Modifier.padding(10.dp),
-                                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Why this happened:",
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontWeight = FontWeight.Bold
-                                                    ),
-                                                    color = MaterialTheme.colorScheme.error
-                                                )
-                                                Text(
-                                                    text = errorMessage,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
-                                            }
-                                        }
-                                        
-                                        // Helpful suggestions
-                                        Surface(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            color = Color(0xFF2196F3).copy(alpha = 0.1f),
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(10.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = "💡",
-                                                    style = MaterialTheme.typography.bodySmall
-                                                )
-                                                Column(
-                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                                ) {
-                                                    Text(
-                                                        text = "What you can do:",
-                                                        style = MaterialTheme.typography.labelSmall.copy(
-                                                            fontWeight = FontWeight.Bold
-                                                        ),
-                                                        color = Color(0xFF1976D2)
-                                                    )
-                                                    Text(
-                                                        text = "• Use a physical Android device for better support\n• Pre-convert videos to 1080p or 720p on your computer\n• The video will be skipped during playback",
-                                                        style = MaterialTheme.typography.bodySmall,
-                                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            Text(
+                                text = "${transcodedVideos.size} video(s) converted and ready for playback",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
                         }
                         
-                        // Cache info at bottom
+                        // Cache size info
                         val cacheSize = transcodingViewModel.getTranscodedCacheSizeFormatted()
                         if (cacheSize != "0KB") {
-                            Divider()
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "💾 Storage Used: $cacheSize",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
+                            Text(
+                                text = "Transcoded cache: $cacheSize",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
                         }
+                        
+                        Text(
+                            text = if (transcodingJobs.isEmpty()) 
+                                "High-resolution videos have been converted to optimal format for your device." 
+                            else "Videos are being converted in the background. Playlist continues playing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
                     }
                 }
             }
@@ -613,15 +386,52 @@ fun PlayerScreen(
             // Start Playback Button
             playlist?.items?.let { items ->
                 if (items.isNotEmpty()) {
+                    var isPlaybackFocused by remember { mutableStateOf(false) }
+                    
                     Button(
                         onClick = { onStartPlayback() },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(64.dp),
+                            .height(64.dp)
+                            .focusRequester(playbackButtonFocusRequester)
+                            .onFocusChanged { focusState ->
+                                isPlaybackFocused = focusState.isFocused
+                                if (focusState.isFocused) {
+                                    // Scroll to show button when focused
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo(
+                                            (scrollState.value + 300).coerceAtMost(scrollState.maxValue)
+                                        )
+                                    }
+                                }
+                            }
+                            .onKeyEvent { keyEvent ->
+                                if (isPlaybackFocused && keyEvent.type == KeyEventType.KeyDown) {
+                                    when (keyEvent.key) {
+                                        Key.DirectionDown -> {
+                                            // Move to re-register button
+                                            reregisterButtonFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        Key.DirectionUp -> {
+                                            // Return focus to scrollable area
+                                            columnFocusRequester.requestFocus()
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                } else false
+                            },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
+                            containerColor = if (isPlaybackFocused)
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                            else
+                                MaterialTheme.colorScheme.primary
                         ),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
+                        border = if (isPlaybackFocused)
+                            androidx.compose.foundation.BorderStroke(4.dp, Color.White)
+                        else null
                     ) {
                         Text(
                             text = "▶ Start Playback (${items.size} videos)",
@@ -662,6 +472,8 @@ fun PlayerScreen(
             }
 
             // Re-register Button
+            var isReregisterFocused by remember { mutableStateOf(false) }
+            
             Button(
                 onClick = {
                     viewModel.clearRegistration()
@@ -669,11 +481,39 @@ fun PlayerScreen(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp),
+                    .height(56.dp)
+                    .focusRequester(reregisterButtonFocusRequester)
+                    .onFocusChanged { focusState ->
+                        isReregisterFocused = focusState.isFocused
+                        if (focusState.isFocused) {
+                            // Scroll to show button when focused
+                            coroutineScope.launch {
+                                scrollState.animateScrollTo(scrollState.maxValue)
+                            }
+                        }
+                    }
+                    .onKeyEvent { keyEvent ->
+                        if (isReregisterFocused && keyEvent.type == KeyEventType.KeyDown) {
+                            when (keyEvent.key) {
+                                Key.DirectionUp -> {
+                                    // Move back to playback button
+                                    playbackButtonFocusRequester.requestFocus()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary
+                    containerColor = if (isReregisterFocused)
+                        MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f)
+                    else
+                        MaterialTheme.colorScheme.secondary
                 ),
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
+                border = if (isReregisterFocused)
+                    androidx.compose.foundation.BorderStroke(4.dp, Color.White)
+                else null
             ) {
                 Text(
                     text = "Re-register Device",
