@@ -1,0 +1,352 @@
+package com.example.dsscreen.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.dsscreen.data.model.Playlist
+import com.example.dsscreen.data.model.PlaylistItem
+import com.example.dsscreen.viewmodel.CacheViewModel
+import com.example.dsscreen.viewmodel.DeviceViewModel
+
+@Composable
+fun PlayerScreen(
+    viewModel: DeviceViewModel,
+    cacheViewModel: CacheViewModel,
+    onReRegister: () -> Unit,
+    onStartPlayback: () -> Unit
+) {
+    val playlist by viewModel.playlist.collectAsState()
+    val registrationData by viewModel.registrationData.collectAsState(initial = emptyMap())
+    val videoCacheStatus by cacheViewModel.videoCacheStatus.collectAsState()
+    val overallProgress by cacheViewModel.overallProgress.collectAsState()
+    
+    // Check cache status when screen loads and periodically
+    LaunchedEffect(playlist) {
+        playlist?.let {
+            // Initial check
+            cacheViewModel.checkCacheStatus(it, "http://10.0.2.2:3000/")
+            
+            // Periodic refresh every 10 seconds while on this screen
+            while (true) {
+                kotlinx.coroutines.delay(10000) // 10 seconds
+                cacheViewModel.checkCacheStatus(it, "http://10.0.2.2:3000/")
+            }
+        }
+    }
+
+    val scrollState = rememberScrollState()
+    val columnFocusRequester = remember { FocusRequester() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(32.dp)
+                .focusRequester(columnFocusRequester)
+                .focusable(),
+            verticalArrangement = Arrangement.spacedBy(24.dp)
+        ) {
+            // Header
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Device Registered",
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Playlist: ${playlist?.name ?: registrationData["playlistName"] ?: "Unknown"}",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                    )
+                    Text(
+                        text = "Code: ${registrationData["playlistCode"] ?: "N/A"}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                    )
+                }
+            }
+
+            // Cache Status Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (overallProgress >= 1f) 
+                        MaterialTheme.colorScheme.primaryContainer 
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (overallProgress >= 1f) "✓ Ready for Offline" else "⟳ Caching Videos",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = if (overallProgress >= 1f) 
+                                MaterialTheme.colorScheme.primary 
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${(overallProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = if (overallProgress >= 1f) 
+                                MaterialTheme.colorScheme.primary 
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    
+                    // Segmented progress bar
+                    playlist?.items?.let { items ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items.sortedBy { it.order }.forEach { item ->
+                                val videoId = item.video?.id ?: ""
+                                val cacheInfo = videoCacheStatus[videoId]
+                                val isCached = cacheInfo?.isCached ?: false
+                                
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(8.dp)
+                                        .background(
+                                            color = if (isCached) 
+                                                MaterialTheme.colorScheme.primary 
+                                            else Color(0xFFCCCCCC),
+                                            shape = RoundedCornerShape(4.dp)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                    
+                    Text(
+                        text = if (overallProgress >= 1f) 
+                            "All videos cached. App will work offline." 
+                        else "Videos cache as they play. Play all videos once for full offline support.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
+            // Device Info
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Device Information",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Divider()
+                    InfoRow("Device UID", registrationData["deviceUid"] ?: "N/A")
+                    InfoRow("Device ID", registrationData["deviceId"] ?: "N/A")
+                    InfoRow("Registered At", registrationData["registeredAt"] ?: "N/A")
+                }
+            }
+
+            // Start Playback Button
+            playlist?.items?.let { items ->
+                if (items.isNotEmpty()) {
+                    Button(
+                        onClick = { onStartPlayback() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "▶ Start Playback (${items.size} videos)",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Playlist Items
+            playlist?.items?.let { items ->
+                if (items.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "Playlist Videos (${items.size})",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Divider()
+
+                            // Display playlist items (not using LazyColumn since parent is scrollable)
+                            items.sortedBy { it.order }.forEach { item ->
+                                PlaylistItemCard(item)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Re-register Button
+            Button(
+                onClick = {
+                    viewModel.clearRegistration()
+                    onReRegister()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text(
+                    text = "Re-register Device",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = FontWeight.Medium
+            ),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
+}
+
+@Composable
+fun PlaylistItemCard(item: PlaylistItem) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = "Video #${item.order + 1}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = item.video?.fileName ?: "Unknown Video",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                item.video?.resolution?.let { resolution ->
+                    Text(
+                        text = resolution,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
+            }
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "${item.duration}s",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+    }
+}
+
