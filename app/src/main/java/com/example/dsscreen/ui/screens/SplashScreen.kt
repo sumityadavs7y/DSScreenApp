@@ -1,5 +1,6 @@
 package com.example.dsscreen.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
@@ -8,9 +9,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.dsscreen.R
 import com.example.dsscreen.viewmodel.DeviceViewModel
 import kotlinx.coroutines.delay
 
@@ -53,19 +56,12 @@ fun SplashScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(48.dp)
         ) {
-            // Company Logo - You can replace this with your actual logo
-            // For now, showing a placeholder
-            Box(
-                modifier = Modifier.size(120.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "DS",
-                    fontSize = 72.sp,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            // App Logo
+            Image(
+                painter = painterResource(id = R.drawable.logo),
+                contentDescription = "DSScreen Logo",
+                modifier = Modifier.size(200.dp)
+            )
             
             Text(
                 text = "Digital Signage",
