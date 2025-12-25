@@ -23,7 +23,7 @@ class CacheViewModel(
     
     private val TAG = "CacheViewModel"
     private val cache = VideoCacheManager.getCache(context)
-    private val downloadManager = VideoDownloadManager(context, cache)
+    val downloadManager = VideoDownloadManager(context, cache)
     
     private val _videoCacheStatus = MutableStateFlow<Map<String, VideoCacheInfo>>(emptyMap())
     val videoCacheStatus: StateFlow<Map<String, VideoCacheInfo>> = _videoCacheStatus.asStateFlow()

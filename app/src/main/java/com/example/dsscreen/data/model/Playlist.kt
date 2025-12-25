@@ -12,7 +12,11 @@ data class Playlist(
     val code: String,
     @SerializedName("isActive")
     val isActive: Boolean = true,
-    val items: List<PlaylistItem>? = null
+    val items: List<PlaylistItem>? = null,
+    @SerializedName("createdAt")
+    val createdAt: String? = null,
+    @SerializedName("updatedAt")
+    val updatedAt: String? = null
 )
 
 /**

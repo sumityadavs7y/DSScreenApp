@@ -90,5 +90,56 @@ class VideoDownloadManager(
         val cacheSize = cache.cacheSpace
         return "Cached videos: ${keys.size}, Size: ${cacheSize / 1024 / 1024}MB"
     }
+    
+    /**
+     * Export cached video to a temporary file for transcoding
+     * Returns temp file path if successful, null otherwise
+     */
+    suspend fun exportCachedVideoToFile(videoUrl: String): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            if (!isVideoCached(videoUrl)) {
+                Log.w(TAG, "Video not cached, cannot export: $videoUrl")
+                return@withContext null
+            }
+            
+            // Create temp file
+            val tempFile = java.io.File.createTempFile("video_export_", ".mp4", context.cacheDir)
+            
+            Log.d(TAG, "Exporting cached video to: ${tempFile.absolutePath}")
+            
+            // Create a data source to read from cache
+            val dataSource = createCachedDataSourceFactory().createDataSource()
+            
+            // Open the data source
+            val dataSpec = androidx.media3.datasource.DataSpec(android.net.Uri.parse(videoUrl))
+            dataSource.open(dataSpec)
+            
+            // Read and write to temp file
+            val outputStream = java.io.FileOutputStream(tempFile)
+            val buffer = ByteArray(8192)
+            var bytesRead: Int
+            var totalBytes = 0L
+            
+            while (true) {
+                bytesRead = dataSource.read(buffer, 0, buffer.size)
+                if (bytesRead == androidx.media3.common.C.RESULT_END_OF_INPUT) {
+                    break
+                }
+                outputStream.write(buffer, 0, bytesRead)
+                totalBytes += bytesRead
+            }
+            
+            outputStream.close()
+            dataSource.close()
+            
+            Log.d(TAG, "✅ Exported ${totalBytes / 1024 / 1024}MB to ${tempFile.absolutePath}")
+            
+            return@withContext tempFile.absolutePath
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error exporting cached video", e)
+            return@withContext null
+        }
+    }
 }
 

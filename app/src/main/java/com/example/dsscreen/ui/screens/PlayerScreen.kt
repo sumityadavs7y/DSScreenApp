@@ -27,6 +27,7 @@ import com.example.dsscreen.viewmodel.DeviceViewModel
 fun PlayerScreen(
     viewModel: DeviceViewModel,
     cacheViewModel: CacheViewModel,
+    transcodingViewModel: com.example.dsscreen.viewmodel.TranscodingViewModel,
     onReRegister: () -> Unit,
     onStartPlayback: () -> Unit
 ) {
@@ -34,6 +35,10 @@ fun PlayerScreen(
     val registrationData by viewModel.registrationData.collectAsState(initial = emptyMap())
     val videoCacheStatus by cacheViewModel.videoCacheStatus.collectAsState()
     val overallProgress by cacheViewModel.overallProgress.collectAsState()
+    
+    // Transcoding state
+    val transcodingJobs by transcodingViewModel.transcodingJobs.collectAsState()
+    val transcodedVideos by transcodingViewModel.transcodedVideos.collectAsState()
     
     // Check cache status when screen loads and periodically
     LaunchedEffect(playlist) {
@@ -172,6 +177,139 @@ fun PlayerScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
+                }
+            }
+
+            // Transcoding Status Card
+            if (transcodingJobs.isNotEmpty() || transcodedVideos.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (transcodingJobs.isEmpty()) 
+                            MaterialTheme.colorScheme.tertiaryContainer 
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (transcodingJobs.isEmpty()) "✓ Video Conversion Complete" else "⟳ Converting Videos",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = if (transcodingJobs.isEmpty()) 
+                                    MaterialTheme.colorScheme.tertiary 
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            
+                            if (transcodingJobs.isNotEmpty()) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                        
+                        // Show device optimal resolution
+                        val (optWidth, optHeight) = transcodingViewModel.getDeviceOptimalResolution()
+                        Text(
+                            text = "Target Resolution: ${optWidth}x${optHeight}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                        
+                        // Active transcoding jobs
+                        if (transcodingJobs.isNotEmpty()) {
+                            Text(
+                                text = "Converting (${transcodingJobs.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            
+                            transcodingJobs.values.forEach { job ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "Video ${job.videoId.take(8)}...",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${(job.progress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                fontWeight = FontWeight.Bold
+                                            ),
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    androidx.compose.material3.LinearProgressIndicator(
+                                        progress = job.progress,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = Color(0xFFE0E0E0)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        // Completed transcodings
+                        if (transcodedVideos.isNotEmpty()) {
+                            Text(
+                                text = "Completed (${transcodedVideos.size})",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                            
+                            Text(
+                                text = "${transcodedVideos.size} video(s) converted and ready for playback",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                        
+                        // Cache size info
+                        val cacheSize = transcodingViewModel.getTranscodedCacheSizeFormatted()
+                        if (cacheSize != "0KB") {
+                            Text(
+                                text = "Transcoded cache: $cacheSize",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                            )
+                        }
+                        
+                        Text(
+                            text = if (transcodingJobs.isEmpty()) 
+                                "High-resolution videos have been converted to optimal format for your device." 
+                            else "Videos are being converted in the background. Playlist continues playing.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
                 }
             }
 

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -13,6 +14,7 @@ import com.example.dsscreen.ui.screens.SplashScreen
 import com.example.dsscreen.ui.screens.VideoPlayerScreen
 import com.example.dsscreen.viewmodel.CacheViewModel
 import com.example.dsscreen.viewmodel.DeviceViewModel
+import com.example.dsscreen.viewmodel.TranscodingViewModel
 
 /**
  * Navigation routes
@@ -31,7 +33,8 @@ sealed class Screen(val route: String) {
 fun NavGraph(
     navController: NavHostController,
     viewModel: DeviceViewModel,
-    cacheViewModel: CacheViewModel
+    cacheViewModel: CacheViewModel,
+    transcodingViewModel: TranscodingViewModel = viewModel()
 ) {
     NavHost(
         navController = navController,
@@ -73,6 +76,7 @@ fun NavGraph(
             PlayerScreen(
                 viewModel = viewModel,
                 cacheViewModel = cacheViewModel,
+                transcodingViewModel = transcodingViewModel,
                 onReRegister = {
                     navController.navigate(Screen.Registration.route) {
                         popUpTo(Screen.Player.route) { inclusive = true }
@@ -92,6 +96,7 @@ fun NavGraph(
                 playlist = currentPlaylist,
                 viewModel = viewModel,
                 cacheViewModel = cacheViewModel,
+                transcodingViewModel = transcodingViewModel,
                 onExit = {
                     // Go to Player screen to view details
                     navController.navigate(Screen.Player.route) {
@@ -101,6 +106,7 @@ fun NavGraph(
                 onDeRegister = {
                     viewModel.clearRegistration()
                     cacheViewModel.clearCache()
+                    transcodingViewModel.clearTranscodedCache()
                     navController.navigate(Screen.Registration.route) {
                         popUpTo(0) { inclusive = true }
                     }
