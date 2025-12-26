@@ -20,6 +20,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.dsscreen.config.AppConfig
 import com.example.dsscreen.data.model.Playlist
 import com.example.dsscreen.data.model.PlaylistItem
 import com.example.dsscreen.viewmodel.CacheViewModel
@@ -47,12 +48,12 @@ fun PlayerScreen(
     LaunchedEffect(playlist) {
         playlist?.let {
             // Initial check
-            cacheViewModel.checkCacheStatus(it, "http://10.0.2.2:3000/")
+            cacheViewModel.checkCacheStatus(it, AppConfig.BASE_URL_WITHOUT_SLASH)
             
             // Periodic refresh every 10 seconds while on this screen
             while (true) {
                 kotlinx.coroutines.delay(10000) // 10 seconds
-                cacheViewModel.checkCacheStatus(it, "http://10.0.2.2:3000/")
+                cacheViewModel.checkCacheStatus(it, AppConfig.BASE_URL_WITHOUT_SLASH)
             }
         }
     }

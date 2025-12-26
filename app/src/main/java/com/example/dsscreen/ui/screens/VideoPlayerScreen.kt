@@ -31,6 +31,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.example.dsscreen.cache.VideoCacheManager
 import com.example.dsscreen.cache.VideoDownloadManager
+import com.example.dsscreen.config.AppConfig
 import com.example.dsscreen.data.model.Playlist
 import com.example.dsscreen.player.PlaylistManager
 import com.example.dsscreen.viewmodel.CacheViewModel
@@ -110,7 +111,7 @@ fun VideoPlayerScreen(
     LaunchedEffect(playlist) {
         playlist?.let {
             android.util.Log.d("VideoPlayerScreen", "Initializing cache status for playlist")
-            cacheViewModel.checkCacheStatus(it, "http://10.0.2.2:3000/")
+            cacheViewModel.checkCacheStatus(it, AppConfig.BASE_URL_WITHOUT_SLASH)
         }
     }
 
@@ -191,7 +192,7 @@ fun VideoPlayerScreen(
                         android.util.Log.d("VideoPlayerScreen", "Video ended - should be cached now")
                         // Update cache status
                         currentItem?.video?.id?.let { videoId ->
-                            cacheViewModel.updateCacheStatusAfterPlay(videoId, "http://10.0.2.2:3000/")
+                            cacheViewModel.updateCacheStatusAfterPlay(videoId, AppConfig.BASE_URL_WITHOUT_SLASH)
                         }
                     }
                     Player.STATE_BUFFERING -> {
@@ -236,7 +237,7 @@ fun VideoPlayerScreen(
                 if (isDecoderError) {
                     currentItem?.video?.let { video ->
                         val videoId = video.id
-                        val videoUrl = playlistManager.getCurrentVideoUrl("http://10.0.2.2:3000/") ?: return@let
+                        val videoUrl = playlistManager.getCurrentVideoUrl(AppConfig.BASE_URL_WITHOUT_SLASH) ?: return@let
                         
                         android.util.Log.d("VideoPlayerScreen", "=".repeat(60))
                         android.util.Log.d("VideoPlayerScreen", "🎬 DECODER ERROR - Triggering transcoding")
@@ -304,7 +305,7 @@ fun VideoPlayerScreen(
     LaunchedEffect(currentItem) {
         currentItem?.let { item ->
             val videoId = item.video?.id
-            val videoUrl = playlistManager.getCurrentVideoUrl("http://10.0.2.2:3000/")
+            val videoUrl = playlistManager.getCurrentVideoUrl(AppConfig.BASE_URL_WITHOUT_SLASH)
             
             videoUrl?.let { url ->
                 isPlayerReady = false
@@ -374,7 +375,7 @@ fun VideoPlayerScreen(
             // Check cache status periodically (every 5 seconds)
             if (remainingTime % 5 == 0) {
                 currentItem?.video?.id?.let { videoId ->
-                    cacheViewModel.updateCacheStatusAfterPlay(videoId, "http://10.0.2.2:3000/")
+                    cacheViewModel.updateCacheStatusAfterPlay(videoId, AppConfig.BASE_URL_WITHOUT_SLASH)
                 }
             }
         }
@@ -382,7 +383,7 @@ fun VideoPlayerScreen(
         // Final cache status update after video completes
         currentItem?.video?.id?.let { videoId ->
             android.util.Log.d("VideoPlayerScreen", "Video duration complete, updating cache status")
-            cacheViewModel.updateCacheStatusAfterPlay(videoId, "http://10.0.2.2:3000/")
+            cacheViewModel.updateCacheStatusAfterPlay(videoId, AppConfig.BASE_URL_WITHOUT_SLASH)
         }
 
         // Move to next video when duration expires

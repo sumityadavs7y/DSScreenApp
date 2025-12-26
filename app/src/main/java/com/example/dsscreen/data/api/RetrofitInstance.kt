@@ -1,5 +1,6 @@
 package com.example.dsscreen.data.api
 
+import com.example.dsscreen.config.AppConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -10,10 +11,8 @@ import java.util.concurrent.TimeUnit
  * Singleton for Retrofit client
  */
 object RetrofitInstance {
-    // Base URL for the backend API
-    // Use 10.0.2.2 for Android Emulator (maps to localhost)
-    // For physical device, use your computer's IP address (e.g., "http://192.168.1.x:3000/")
-    private const val BASE_URL = "http://10.0.2.2:3000/"
+    // Base URL is now centralized in AppConfig
+    private const val BASE_URL = AppConfig.BASE_URL
 
     /**
      * OkHttp client with logging interceptor
