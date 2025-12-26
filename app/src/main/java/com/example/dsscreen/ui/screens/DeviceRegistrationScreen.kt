@@ -59,41 +59,85 @@ fun DeviceRegistrationScreen(
             }
             
             is RegistrationState.Error -> {
+                val errorMessage = (registrationState as RegistrationState.Error).message
+                val isLicenseError = errorMessage.contains("license", ignoreCase = true) || 
+                                    errorMessage.contains("expired", ignoreCase = true) ||
+                                    errorMessage.contains("not active", ignoreCase = true)
+                
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp),
                     modifier = Modifier.padding(48.dp)
                 ) {
+                    // Error Icon
                     Text(
-                        text = "Registration Failed",
-                        fontSize = 28.sp,
+                        text = if (isLicenseError) "⚠️" else "❌",
+                        fontSize = 64.sp
+                    )
+                    
+                    // Error Title
+                    Text(
+                        text = if (isLicenseError) "License Issue" else "Registration Failed",
+                        fontSize = 32.sp,
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
                     
-                    Text(
-                        text = (registrationState as RegistrationState.Error).message,
-                        fontSize = 18.sp,
-                        color = Color(0xFFFF6B6B),
-                        textAlign = TextAlign.Center
-                    )
+                    // Error Message Card
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth(0.9f)
+                            .wrapContentHeight(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF1E1E1E)
+                        ),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = errorMessage,
+                                fontSize = 20.sp,
+                                color = Color(0xFFFF6B6B),
+                                textAlign = TextAlign.Center,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 28.sp
+                            )
+                            
+                            if (isLicenseError) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Please contact your administrator to resolve this issue or mail support@logicalvalley.in",
+                                    fontSize = 16.sp,
+                                    color = Color(0xFFCCCCCC),
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 22.sp
+                                )
+                            }
+                        }
+                    }
                     
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     
+                    // Try Again Button
                     Button(
                         onClick = { viewModel.resetState() },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.White
                         ),
                         modifier = Modifier
-                            .width(200.dp)
-                            .height(50.dp)
+                            .fillMaxWidth(0.6f)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = "Try Again",
-                            fontSize = 18.sp,
+                            fontSize = 20.sp,
                             color = Color.Black,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

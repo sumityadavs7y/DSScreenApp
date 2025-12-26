@@ -111,6 +111,8 @@ class DeviceViewModel(
 
                 result.fold(
                     onSuccess = { response ->
+                        Log.d(TAG, "✓ Registration successful: ${response.playlist.name}")
+                        
                         // Save registration data
                         val timestamp = SimpleDateFormat(
                             "yyyy-MM-dd'T'HH:mm:ss'Z'",
@@ -137,9 +139,17 @@ class DeviceViewModel(
                         startPeriodicUpdateCheck()
                     },
                     onFailure = { error ->
-                        _registrationState.value = RegistrationState.Error(
-                            error.message ?: "Registration failed"
-                        )
+                        val errorMessage = error.message ?: "Registration failed"
+                        Log.e(TAG, "✗ Registration failed: $errorMessage")
+                        
+                        // Check if it's a license error
+                        if (errorMessage.contains("license", ignoreCase = true) ||
+                            errorMessage.contains("not active", ignoreCase = true) ||
+                            errorMessage.contains("expired", ignoreCase = true)) {
+                            Log.w(TAG, "⚠ License validation failed")
+                        }
+                        
+                        _registrationState.value = RegistrationState.Error(errorMessage)
                     }
                 )
             } catch (e: Exception) {
