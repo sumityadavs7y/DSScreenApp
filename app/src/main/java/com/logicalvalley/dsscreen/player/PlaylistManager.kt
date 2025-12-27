@@ -31,7 +31,8 @@ class PlaylistManager(
     fun getCurrentVideoUrl(baseUrl: String): String? {
         return currentItem.value?.video?.let { video ->
             // Construct the video download URL (public endpoint)
-            "${baseUrl}api/videos/${video.id}/download"
+            val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+            "${base}api/videos/${video.id}/download"
         }
     }
 

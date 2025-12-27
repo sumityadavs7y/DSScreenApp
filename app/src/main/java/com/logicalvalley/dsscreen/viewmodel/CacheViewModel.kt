@@ -84,7 +84,8 @@ class CacheViewModel(
                     Log.w(TAG, "Video at index $index has no ID, skipping")
                     return@forEachIndexed
                 }
-                val videoUrl = "${baseUrl}api/videos/$videoId/download"
+                val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                val videoUrl = "${base}api/videos/$videoId/download"
                 val isCached = downloadManager.isVideoCached(videoUrl)
                 
                 statusMap[videoId] = VideoCacheInfo(
@@ -155,7 +156,8 @@ class CacheViewModel(
      */
     fun updateCacheStatusAfterPlay(videoId: String, baseUrl: String) {
         viewModelScope.launch {
-            val videoUrl = "${baseUrl}api/videos/$videoId/download"
+            val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+            val videoUrl = "${base}api/videos/$videoId/download"
             val isCached = downloadManager.isVideoCached(videoUrl)
             
             Log.d(TAG, "Checking cache for video $videoId at $videoUrl: cached=$isCached")

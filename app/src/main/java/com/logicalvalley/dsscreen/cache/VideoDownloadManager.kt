@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
+import com.logicalvalley.dsscreen.data.api.RetrofitInstance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,10 +72,9 @@ class VideoDownloadManager(
     fun createCachedDataSourceFactory(): DataSource.Factory {
         Log.d(TAG, "Creating cached data source factory")
         
-        val upstreamFactory = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(30000)
-            .setReadTimeoutMs(30000)
-            .setAllowCrossProtocolRedirects(true)
+        // Use OkHttpDataSource.Factory with our unsafe OkHttpClient
+        // to handle SSL trust issues in development/old devices
+        val upstreamFactory = OkHttpDataSource.Factory(RetrofitInstance.okHttpClient)
         
         return CacheDataSource.Factory()
             .setCache(cache)

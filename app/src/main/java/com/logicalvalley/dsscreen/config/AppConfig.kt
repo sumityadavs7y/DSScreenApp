@@ -15,7 +15,7 @@ object AppConfig {
      * - Physical Device: "http://YOUR_COMPUTER_IP:3000/" (e.g., "http://192.168.1.100:3000/")
      * - Production: "https://your-production-domain.com/"
      */
-    const val BASE_URL = "http://signage.logicalvalley.in/"
+    const val BASE_URL = "https://signage.logicalvalley.in/"
     
     /**
      * Get the base URL without trailing slash
