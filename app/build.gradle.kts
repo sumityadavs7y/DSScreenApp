@@ -11,7 +11,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.dsscreen"
+        applicationId = "com.logicalvalley.dsscreen"
         minSdk = 23
         targetSdk = 36
         versionCode = 1
