@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.dsscreen"
+    namespace = "com.logicalvalley.dsscreen"
     compileSdk {
         version = release(36)
     }
