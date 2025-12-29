@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
+import com.logicalvalley.digitalSignage.config.AppConfig
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
 import com.logicalvalley.digitalSignage.data.model.Playlist
 import com.logicalvalley.digitalSignage.data.model.PlaylistItem
@@ -76,7 +77,7 @@ fun ImagePlayer(
     onError: (String) -> Unit
 ) {
     val durationMillis = (item.duration * 1000L).coerceAtLeast(1000L)
-    val imageUrl = localFile ?: "http://10.0.2.2:3000/api/media/${item.video?.id}/download"
+    val imageUrl = localFile ?: "${AppConfig.BASE_URL}/api/media/${item.video?.id}/download"
     Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, Local: ${localFile != null}")
 
     var hasError by remember(item.id) { mutableStateOf(false) }
@@ -123,7 +124,7 @@ fun VideoPlayer(
     val context = LocalContext.current
     val videoId = item.video?.id
     val videoName = item.video?.fileName ?: "Unknown"
-    val videoUrl = "http://10.0.2.2:3000/api/media/$videoId/download"
+    val videoUrl = "${AppConfig.BASE_URL}/api/media/$videoId/download"
     
     Log.d("VideoPlayer", "🎥 Initializing video: $videoName, Local: ${localFile != null}")
     

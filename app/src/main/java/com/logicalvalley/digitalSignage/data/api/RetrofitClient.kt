@@ -1,12 +1,13 @@
 package com.logicalvalley.digitalSignage.data.api
 
+import com.logicalvalley.digitalSignage.config.AppConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 object RetrofitClient {
-    private const val BASE_URL = "http://10.0.2.2:3000/" // Default for emulator to localhost
+    private val BASE_URL = AppConfig.BASE_URL + "/"
 
     private val logging = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

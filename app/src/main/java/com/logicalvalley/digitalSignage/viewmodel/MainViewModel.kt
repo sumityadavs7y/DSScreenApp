@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
+import com.logicalvalley.digitalSignage.config.AppConfig
 import com.logicalvalley.digitalSignage.data.api.RetrofitClient
 import com.logicalvalley.digitalSignage.data.local.DataStoreManager
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
@@ -40,7 +41,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dataStoreManager = DataStoreManager(application)
     private val cacheManager = MediaCacheManager(application)
     private val deviceUid = Settings.Secure.getString(application.contentResolver, Settings.Secure.ANDROID_ID)
-    private val baseUrl = "http://10.0.2.2:3000"
+    private val baseUrl = AppConfig.BASE_URL
     private val gson = Gson()
 
     private val _appState = MutableStateFlow<AppState>(AppState.Loading)
