@@ -29,6 +29,7 @@ import com.logicalvalley.digitalSignage.ui.stats.StatsScreen
 
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalTvMaterial3Api::class)
@@ -40,7 +41,33 @@ class MainActivity : ComponentActivity() {
                 val state by viewModel.appState.collectAsState()
                 val licenseExpiry by viewModel.licenseExpiryDate.collectAsState()
                 val playbackError by viewModel.playbackError.collectAsState()
+                val isSocketConnected by viewModel.isSocketConnected.collectAsState()
+                val remoteCommand by viewModel.remoteCommand.collectAsState()
                 var showStats by remember { mutableStateOf(false) }
+
+                LaunchedEffect(state) {
+                    if (state is AppState.RegistrationRequired) {
+                        val qr = (state as AppState.RegistrationRequired).qrData
+                        Log.d("MainActivity", "📱 Registration Screen Active. QR Data present: ${qr != null}")
+                        if (qr != null) {
+                            Log.d("MainActivity", "🔗 QR Data URL Length: ${qr.qrCodeDataUrl.length}")
+                            Log.d("MainActivity", "🔗 QR Data URL Prefix: ${qr.qrCodeDataUrl.take(50)}...")
+                        }
+                    }
+                }
+
+                LaunchedEffect(remoteCommand) {
+                    when (remoteCommand) {
+                        "ENTER_FULLSCREEN" -> {
+                            showStats = false
+                            viewModel.clearRemoteCommand()
+                        }
+                        "EXIT_FULLSCREEN" -> {
+                            showStats = true
+                            viewModel.clearRemoteCommand()
+                        }
+                    }
+                }
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -54,7 +81,10 @@ class MainActivity : ComponentActivity() {
                         }
                         is AppState.RegistrationRequired -> {
                             RegistrationScreen(
-                                onRegister = { viewModel.register(it) }
+                                qrData = s.qrData,
+                                error = s.error,
+                                onRegister = { viewModel.register(it) },
+                                onRefreshQr = { viewModel.initQrRegistration() }
                             )
                         }
                         is AppState.LicenseExpired -> {
@@ -81,7 +111,7 @@ class MainActivity : ComponentActivity() {
                                         textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(32.dp))
-                                    Button(onClick = { viewModel.resetRegistration() }) {
+                                    Button(onClick = { viewModel.manualDeregister() }) {
                                         Text("Reset Registration")
                                     }
                                 }
@@ -89,8 +119,10 @@ class MainActivity : ComponentActivity() {
                         }
                         is AppState.Error -> {
                             RegistrationScreen(
+                                qrData = null,
+                                error = s.message,
                                 onRegister = { viewModel.register(it) },
-                                error = s.message
+                                onRefreshQr = { viewModel.initQrRegistration() }
                             )
                         }
                         is AppState.Playing -> {
@@ -100,10 +132,11 @@ class MainActivity : ComponentActivity() {
                                     cacheProgress = s.cacheProgress,
                                     licenseExpiry = licenseExpiry,
                                     playbackError = playbackError,
+                                    isSocketConnected = isSocketConnected,
                                     onBackToPlaylist = { showStats = false },
                                     onReset = { 
                                         showStats = false
-                                        viewModel.resetRegistration() 
+                                        viewModel.manualDeregister() 
                                     }
                                 )
                             } else {

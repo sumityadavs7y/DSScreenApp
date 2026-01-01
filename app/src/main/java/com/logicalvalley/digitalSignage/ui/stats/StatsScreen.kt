@@ -31,6 +31,7 @@ fun StatsScreen(
     cacheProgress: Float,
     licenseExpiry: String?,
     playbackError: PlaybackErrorInfo?,
+    isSocketConnected: Boolean,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit
 ) {
@@ -84,6 +85,25 @@ fun StatsScreen(
                             else -> Color.Green
                         }
                     )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .background(
+                                    color = if (isSocketConnected) Color.Green else Color.Red,
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isSocketConnected) "Remote Control: Connected" else "Remote Control: Disconnected",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isSocketConnected) Color.Green else Color.Red
+                        )
+                    }
                 }
 
                 Row {
@@ -113,6 +133,11 @@ fun StatsScreen(
                 
                 // Left Column: General Device Info
                 Column(modifier = Modifier.weight(1f)) {
+                    StatItem(
+                        label = "Remote Management",
+                        value = if (isSocketConnected) "Connected" else "Offline",
+                        valueColor = if (isSocketConnected) Color.Green else Color.Red
+                    )
                     StatItem(label = "Total Items", value = "${playlist.items.size}")
                     StatItem(
                         label = "Offline Ready", 
@@ -191,10 +216,10 @@ fun StatsScreen(
 }
 
 @Composable
-private fun StatItem(label: String, value: String) {
+private fun StatItem(label: String, value: String, valueColor: Color = Color.White) {
     Column(modifier = Modifier.padding(vertical = 8.dp)) {
         Text(text = label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
-        Text(text = value, style = MaterialTheme.typography.headlineSmall, color = Color.White)
+        Text(text = value, style = MaterialTheme.typography.headlineSmall, color = valueColor)
     }
 }
 

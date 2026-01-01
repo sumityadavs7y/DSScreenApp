@@ -12,14 +12,30 @@ data class RegisterResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("message") val message: String?,
     @SerializedName("data") val data: RegisterData?,
-    @SerializedName("license") val topLevelLicense: LicenseInfo? // Fallback for some endpoints
+    @SerializedName("license") val topLevelLicense: LicenseInfo?,
+    @SerializedName("playlist") val topLevelPlaylist: Playlist?, // For Socket.io events
+    @SerializedName("device") val topLevelDevice: DeviceInfo?    // For Socket.io events
 )
 
 data class TimelineResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("message") val message: String?,
     @SerializedName("data") val items: List<PlaylistItem>?,
-    @SerializedName("license") val license: LicenseInfo?
+    @SerializedName("license") val license: LicenseInfo?,
+    @SerializedName("deviceDeleted") val deviceDeleted: Boolean? = false
+)
+
+data class InitRegistrationResponse(
+    @SerializedName("success") val success: Boolean,
+    @SerializedName("message") val message: String?,
+    @SerializedName("data") val data: InitRegistrationData?
+)
+
+data class InitRegistrationData(
+    @SerializedName("sessionToken") val sessionToken: String,
+    @SerializedName("qrCodeDataUrl") val qrCodeDataUrl: String,
+    @SerializedName("registrationUrl") val registrationUrl: String,
+    @SerializedName("expiresAt") val expiresAt: String
 )
 
 data class RegisterData(
