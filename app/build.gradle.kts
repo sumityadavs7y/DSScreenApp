@@ -80,6 +80,7 @@ dependencies {
     
     // Socket.IO
     implementation(libs.socket.io.client)
+    implementation(libs.androidx.compose.runtime)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

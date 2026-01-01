@@ -13,9 +13,16 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.*
 import com.logicalvalley.digitalSignage.R
 
+import android.util.Log
+import androidx.compose.runtime.LaunchedEffect
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun LoadingScreen() {
+    LaunchedEffect(Unit) {
+        Log.d("LoadingScreen", "🎨 Rendering Loading/Splash Screen")
+    }
+    
     Box(
         modifier = Modifier
             .fillMaxSize()

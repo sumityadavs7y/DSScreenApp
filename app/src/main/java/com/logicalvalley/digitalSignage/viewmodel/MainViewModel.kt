@@ -135,8 +135,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun checkRegistration() {
         Log.d(TAG, "🔍 STARTUP: Checking registration status...")
         viewModelScope.launch {
+            Log.d(TAG, "⏳ Starting 2-second splash delay...")
             // Show loading/splash for at least 2 seconds
             delay(2000)
+            Log.d(TAG, "⌛ Splash delay complete. Processing registration...")
             
             val savedCode = dataStoreManager.playlistCode.first() ?: ""
             val savedPlaylistId = dataStoreManager.playlistId.first() ?: ""

@@ -16,9 +16,10 @@
 
     <application
         android:allowBackup="true"
-        android:banner="@mipmap/ic_launcher"
-        android:icon="@mipmap/ic_launcher"
+        android:banner="@drawable/logo"
+        android:icon="@drawable/logo"
         android:label="@string/app_name"
+        android:roundIcon="@drawable/logo"
         android:supportsRtl="true"
         android:theme="@style/Theme.DigitalSignageLV"
         android:usesCleartextTraffic="true">

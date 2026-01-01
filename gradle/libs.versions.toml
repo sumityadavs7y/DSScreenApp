@@ -17,6 +17,7 @@ datastore = "1.1.1"
 navigation = "2.8.5"
 lifecycle = "2.8.7"
 socketio = "2.1.1"
+runtime = "1.10.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -61,6 +62,7 @@ androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "l
 
 # Socket.IO
 socket-io-client = { group = "io.socket", name = "socket.io-client", version.ref = "socketio" }
+androidx-compose-runtime = { group = "androidx.compose.runtime", name = "runtime", version.ref = "runtime" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
