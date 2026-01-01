@@ -29,6 +29,9 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.material.icons.Icons
 
+import androidx.compose.ui.res.painterResource
+import com.logicalvalley.digitalSignage.R
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun RegistrationScreen(
@@ -69,6 +72,14 @@ fun RegistrationScreen(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(id = R.drawable.logo),
+            contentDescription = "App Logo",
+            modifier = Modifier.size(120.dp)
+        )
+        
+        Spacer(modifier = Modifier.height(24.dp))
+
         Text(
             text = if (showQr) "Scan QR to Register" else "Enter Playlist Code",
             style = MaterialTheme.typography.headlineMedium,

@@ -135,6 +135,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun checkRegistration() {
         Log.d(TAG, "🔍 STARTUP: Checking registration status...")
         viewModelScope.launch {
+            // Show loading/splash for at least 2 seconds
+            delay(2000)
+            
             val savedCode = dataStoreManager.playlistCode.first() ?: ""
             val savedPlaylistId = dataStoreManager.playlistId.first() ?: ""
             val savedPlaylistJson = dataStoreManager.savedPlaylist.first() ?: ""

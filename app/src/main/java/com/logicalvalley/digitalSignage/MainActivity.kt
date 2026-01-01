@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.*
 import androidx.compose.material3.CircularProgressIndicator
+import com.logicalvalley.digitalSignage.ui.loading.LoadingScreen
 import com.logicalvalley.digitalSignage.ui.player.PlayerScreen
 import com.logicalvalley.digitalSignage.ui.registration.RegistrationScreen
 import com.logicalvalley.digitalSignage.ui.theme.DigitalSignageLVTheme
@@ -75,9 +76,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     when (val s = state) {
                         is AppState.Loading -> {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator()
-                            }
+                            LoadingScreen()
                         }
                         is AppState.RegistrationRequired -> {
                             RegistrationScreen(

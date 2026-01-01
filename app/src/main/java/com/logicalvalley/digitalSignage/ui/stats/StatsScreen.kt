@@ -21,6 +21,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 
+import androidx.compose.ui.res.painterResource
+import com.logicalvalley.digitalSignage.R
+
 /**
  * Robust UI for displaying device and playlist statistics.
  */
