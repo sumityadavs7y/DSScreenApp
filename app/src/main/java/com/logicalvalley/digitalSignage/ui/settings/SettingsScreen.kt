@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,7 +37,8 @@ fun SettingsScreen(
     onRotateClockwise: () -> Unit,
     onRotateAntiClockwise: () -> Unit,
     onSetAutoRotation: () -> Unit,
-    onSetDisplayMode: (String) -> Unit
+    onSetDisplayMode: (String) -> Unit,
+    onOpenCustomDisplayMode: () -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
 
@@ -266,7 +268,7 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Display Mode Buttons
+                        // Display Mode Buttons - Row 1
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -359,6 +361,38 @@ fun SettingsScreen(
                                         color = Color.White
                                     )
                                 }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Display Mode Buttons - Row 2 (Custom)
+                        Button(
+                            onClick = onOpenCustomDisplayMode,
+                            modifier = Modifier.fillMaxWidth().height(70.dp),
+                            colors = ButtonDefaults.colors(
+                                containerColor = if (currentDisplayMode == "CUSTOM")
+                                    Color(0xFFFF6F00) else Color(0xFF424242),
+                                focusedContainerColor = if (currentDisplayMode == "CUSTOM")
+                                    Color(0xFFFF8F00) else Color(0xFF616161)
+                            )
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                    tint = Color.White
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    text = "CUSTOM - Per Item Settings",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = Color.White
+                                )
                             }
                         }
                     }

@@ -35,6 +35,7 @@ import java.io.File
 fun PlayerScreen(
     playlist: Playlist,
     displayMode: String,
+    customDisplayModes: Map<String, String>,
     onBack: () -> Unit,
     onError: (String, String) -> Unit
 ) {
@@ -48,11 +49,18 @@ fun PlayerScreen(
         val localFile = cacheManager.getLocalFile(currentItem)
         val isVideo = currentItem.video?.mimeType?.startsWith("video") == true
         
+        // Determine actual display mode: use custom if mode is CUSTOM, otherwise use global
+        val actualDisplayMode = if (displayMode == "CUSTOM") {
+            customDisplayModes[currentItem.id] ?: "FIT"
+        } else {
+            displayMode
+        }
+        
         if (isVideo) {
             VideoPlayer(
                 item = currentItem,
                 localFile = localFile,
-                displayMode = displayMode,
+                displayMode = actualDisplayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                 },
@@ -64,7 +72,7 @@ fun PlayerScreen(
             ImagePlayer(
                 item = currentItem,
                 localFile = localFile,
-                displayMode = displayMode,
+                displayMode = actualDisplayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                 },

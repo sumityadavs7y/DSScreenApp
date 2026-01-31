@@ -40,6 +40,7 @@ import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
 import androidx.activity.compose.BackHandler
 import com.logicalvalley.digitalSignage.ui.stats.StatsScreen
 import com.logicalvalley.digitalSignage.ui.settings.SettingsScreen
+import com.logicalvalley.digitalSignage.ui.settings.CustomDisplayModeScreen
 
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -62,6 +63,10 @@ class MainActivity : ComponentActivity() {
     // StateFlow to hold current display mode
     private val _currentDisplayMode = MutableStateFlow("FIT")
     private val currentDisplayMode: StateFlow<String> = _currentDisplayMode.asStateFlow()
+    
+    // StateFlow to hold custom display modes (per item)
+    private val _customDisplayModes = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val customDisplayModes: StateFlow<Map<String, String>> = _customDisplayModes.asStateFlow()
 
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -89,6 +94,9 @@ class MainActivity : ComponentActivity() {
         // Load saved display mode
         loadSavedDisplayMode()
         
+        // Load custom display modes
+        loadCustomDisplayModes()
+        
         setContent {
             DigitalSignageLVTheme {
                 val viewModel: MainViewModel = viewModel()
@@ -99,10 +107,12 @@ class MainActivity : ComponentActivity() {
                 val remoteCommand by viewModel.remoteCommand.collectAsState()
                 var showStats by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
+                var showCustomDisplayMode by remember { mutableStateOf(false) }
                 
                 // Collect current rotation and display mode from StateFlow
                 val currentRotationValue by currentRotation.collectAsState()
                 val currentDisplayModeValue by currentDisplayMode.collectAsState()
+                val customDisplayModesValue by customDisplayModes.collectAsState()
 
                 LaunchedEffect(state) {
                     if (state is AppState.RegistrationRequired) {
@@ -184,6 +194,16 @@ class MainActivity : ComponentActivity() {
                         }
                         is AppState.Playing -> {
                             when {
+                                showCustomDisplayMode -> {
+                                    CustomDisplayModeScreen(
+                                        playlist = s.playlist,
+                                        customDisplayModes = customDisplayModesValue,
+                                        onBack = { showCustomDisplayMode = false },
+                                        onSetItemDisplayMode = { itemId, mode ->
+                                            setItemDisplayMode(itemId, mode)
+                                        }
+                                    )
+                                }
                                 showSettings -> {
                                     SettingsScreen(
                                         currentRotation = currentRotationValue,
@@ -192,7 +212,12 @@ class MainActivity : ComponentActivity() {
                                         onRotateClockwise = { rotateClockwise() },
                                         onRotateAntiClockwise = { rotateAntiClockwise() },
                                         onSetAutoRotation = { setAutoRotation() },
-                                        onSetDisplayMode = { mode -> setDisplayMode(mode) }
+                                        onSetDisplayMode = { mode -> setDisplayMode(mode) },
+                                        onOpenCustomDisplayMode = {
+                                            setDisplayMode("CUSTOM")
+                                            showSettings = false
+                                            showCustomDisplayMode = true
+                                        }
                                     )
                                 }
                                 showStats -> {
@@ -220,6 +245,7 @@ class MainActivity : ComponentActivity() {
                                     PlayerScreen(
                                         playlist = s.playlist,
                                         displayMode = currentDisplayModeValue,
+                                        customDisplayModes = customDisplayModesValue,
                                         onBack = { showStats = true },
                                         onError = { videoName, error ->
                                             viewModel.reportPlaybackError(videoName, error)
@@ -432,7 +458,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Set display mode and save preference
-     * @param mode One of: "FIT", "FILL", "STRETCH"
+     * @param mode One of: "FIT", "FILL", "STRETCH", "CUSTOM"
      */
     private fun setDisplayMode(mode: String) {
         lifecycleScope.launch {
@@ -440,6 +466,36 @@ class MainActivity : ComponentActivity() {
             _currentDisplayMode.value = mode
             dataStoreManager.saveDisplayMode(mode)
             Log.d(TAG, "✅ Display mode saved: $mode")
+        }
+    }
+
+    /**
+     * Load custom display modes preference
+     */
+    private fun loadCustomDisplayModes() {
+        lifecycleScope.launch {
+            val savedModes = dataStoreManager.customDisplayModes.first()
+            Log.d(TAG, "📺 Loading custom display modes: ${savedModes.size} items")
+            _customDisplayModes.value = savedModes
+        }
+    }
+
+    /**
+     * Set display mode for a specific playlist item
+     * @param itemId The playlist item ID
+     * @param mode One of: "FIT", "FILL", "STRETCH"
+     */
+    private fun setItemDisplayMode(itemId: String, mode: String) {
+        lifecycleScope.launch {
+            Log.d(TAG, "📺 Setting display mode for item $itemId to: $mode")
+            dataStoreManager.saveItemDisplayMode(itemId, mode)
+            
+            // Update local state
+            val updatedModes = _customDisplayModes.value.toMutableMap()
+            updatedModes[itemId] = mode
+            _customDisplayModes.value = updatedModes
+            
+            Log.d(TAG, "✅ Item display mode saved: $itemId = $mode")
         }
     }
 }

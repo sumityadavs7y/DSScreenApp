@@ -98,5 +98,65 @@ class DataStoreManager(private val context: Context) {
             preferences[DISPLAY_MODE] = mode
         }
     }
+
+    val CUSTOM_DISPLAY_MODES = stringPreferencesKey("custom_display_modes")
+
+    val customDisplayModes: Flow<Map<String, String>> = context.dataStore.data
+        .map { preferences ->
+            val json = preferences[CUSTOM_DISPLAY_MODES] ?: "{}"
+            try {
+                // Parse JSON string to Map
+                parseCustomDisplayModes(json)
+            } catch (e: Exception) {
+                emptyMap()
+            }
+        }
+
+    suspend fun saveCustomDisplayModes(modes: Map<String, String>) {
+        context.dataStore.edit { preferences ->
+            // Convert Map to JSON string
+            val json = convertCustomDisplayModesToJson(modes)
+            preferences[CUSTOM_DISPLAY_MODES] = json
+        }
+    }
+
+    suspend fun saveItemDisplayMode(itemId: String, mode: String) {
+        context.dataStore.edit { preferences ->
+            val currentJson = preferences[CUSTOM_DISPLAY_MODES] ?: "{}"
+            val currentModes = parseCustomDisplayModes(currentJson).toMutableMap()
+            currentModes[itemId] = mode
+            val newJson = convertCustomDisplayModesToJson(currentModes)
+            preferences[CUSTOM_DISPLAY_MODES] = newJson
+        }
+    }
+
+    private fun parseCustomDisplayModes(json: String): Map<String, String> {
+        if (json.isEmpty() || json == "{}") return emptyMap()
+        
+        // Simple JSON parser for Map<String, String>
+        val map = mutableMapOf<String, String>()
+        val content = json.trim().removeSurrounding("{", "}")
+        if (content.isEmpty()) return emptyMap()
+        
+        content.split(",").forEach { pair ->
+            val parts = pair.split(":")
+            if (parts.size == 2) {
+                val key = parts[0].trim().removeSurrounding("\"")
+                val value = parts[1].trim().removeSurrounding("\"")
+                map[key] = value
+            }
+        }
+        return map
+    }
+
+    private fun convertCustomDisplayModesToJson(modes: Map<String, String>): String {
+        if (modes.isEmpty()) return "{}"
+        
+        val entries = modes.entries.joinToString(",") { (key, value) ->
+            "\"$key\":\"$value\""
+        }
+        return "{$entries}"
+    }
 }
+
 
