@@ -1,6 +1,12 @@
 package com.logicalvalley.digitalSignage
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -15,9 +21,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.*
 import androidx.compose.material3.CircularProgressIndicator
+import com.logicalvalley.digitalSignage.service.KeepAliveService
 import com.logicalvalley.digitalSignage.ui.loading.LoadingScreen
 import com.logicalvalley.digitalSignage.ui.player.PlayerScreen
 import com.logicalvalley.digitalSignage.ui.registration.RegistrationScreen
@@ -33,9 +43,25 @@ import androidx.compose.ui.unit.dp
 import android.util.Log
 
 class MainActivity : ComponentActivity() {
+    private val TAG = "MainActivity"
+
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        Log.d(TAG, "🚀 MainActivity onCreate")
+        
+        // Keep screen on at all times
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
+        // Hide system UI for full-screen digital signage experience
+        hideSystemUI()
+        
+        // Start foreground service to keep app running
+        startKeepAliveService()
+        
+        // Request battery optimization exemption
+        requestBatteryOptimizationExemption()
         setContent {
             DigitalSignageLVTheme {
                 val viewModel: MainViewModel = viewModel()
@@ -153,6 +179,68 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "▶️ MainActivity onResume")
+        hideSystemUI()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "🛑 MainActivity onDestroy")
+    }
+
+    /**
+     * Start the foreground service to keep the app running in background
+     */
+    private fun startKeepAliveService() {
+        try {
+            val serviceIntent = Intent(this, KeepAliveService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            Log.d(TAG, "✅ KeepAliveService started")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to start KeepAliveService", e)
+        }
+    }
+
+    /**
+     * Hide system UI (status bar, navigation bar) for immersive digital signage experience
+     */
+    private fun hideSystemUI() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    }
+
+    /**
+     * Request exemption from battery optimization to prevent Android from killing the app
+     */
+    private fun requestBatteryOptimizationExemption() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            val packageName = packageName
+            
+            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                    Log.d(TAG, "📱 Requesting battery optimization exemption")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Failed to request battery optimization exemption", e)
+                }
+            } else {
+                Log.d(TAG, "✅ Battery optimization already disabled")
             }
         }
     }
