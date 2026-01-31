@@ -213,6 +213,15 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         Log.d(TAG, "▶️ MainActivity onResume")
         hideSystemUI()
+        
+        // Re-apply rotation to prevent device from overriding it
+        lifecycleScope.launch {
+            val savedRotation = _currentRotation.value
+            if (savedRotation != "AUTO") {
+                Log.d(TAG, "🔄 Re-applying rotation on resume: $savedRotation")
+                applyRotation(savedRotation)
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -360,11 +369,28 @@ class MainActivity : ComponentActivity() {
             "90" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             "180" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
             "270" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-            "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR // Follow device sensor
+            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         }
         
-        requestedOrientation = orientation
-        Log.d(TAG, "🔄 Applied orientation: $rotation")
+        // Apply orientation immediately on main thread
+        runOnUiThread {
+            requestedOrientation = orientation
+            Log.d(TAG, "🔄 Applied orientation: $rotation (${getOrientationName(orientation)})")
+        }
+    }
+    
+    /**
+     * Get readable orientation name for logging
+     */
+    private fun getOrientationName(orientation: Int): String {
+        return when (orientation) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT -> "PORTRAIT"
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE -> "LANDSCAPE"
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT -> "REVERSE_PORTRAIT"
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE -> "REVERSE_LANDSCAPE"
+            ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR -> "FULL_SENSOR"
+            else -> "UNKNOWN"
+        }
     }
 }
