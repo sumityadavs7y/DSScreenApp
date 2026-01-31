@@ -16,6 +16,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -33,6 +34,7 @@ import java.io.File
 @Composable
 fun PlayerScreen(
     playlist: Playlist,
+    displayMode: String,
     onBack: () -> Unit,
     onError: (String, String) -> Unit
 ) {
@@ -50,6 +52,7 @@ fun PlayerScreen(
             VideoPlayer(
                 item = currentItem,
                 localFile = localFile,
+                displayMode = displayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                 },
@@ -61,6 +64,7 @@ fun PlayerScreen(
             ImagePlayer(
                 item = currentItem,
                 localFile = localFile,
+                displayMode = displayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                 },
@@ -76,22 +80,31 @@ fun PlayerScreen(
 fun ImagePlayer(
     item: PlaylistItem,
     localFile: File?,
+    displayMode: String,
     onFinished: () -> Unit,
     onError: (String) -> Unit
 ) {
     val durationMillis = (item.duration * 1000L).coerceAtLeast(1000L)
     val imageUrl = localFile ?: "${AppConfig.BASE_URL}/api/media/${item.video?.id}/download"
-    Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, Local: ${localFile != null}")
+    Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, Mode: $displayMode, Local: ${localFile != null}")
 
     var hasError by remember(item.id) { mutableStateOf(false) }
     var errorMessage by remember(item.id) { mutableStateOf("") }
+
+    // Map display mode to ContentScale
+    val contentScale = when (displayMode) {
+        "FIT" -> ContentScale.Fit
+        "FILL" -> ContentScale.Crop
+        "STRETCH" -> ContentScale.FillBounds
+        else -> ContentScale.Fit
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AsyncImage(
             model = imageUrl,
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.FillBounds,
+            contentScale = contentScale,
             onError = { result ->
                 val error = result.result.throwable.message ?: "Failed to load image"
                 Log.e("ImagePlayer", "❌ Error loading image: $error")
@@ -117,10 +130,12 @@ fun ImagePlayer(
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayer(
     item: PlaylistItem,
     localFile: File?,
+    displayMode: String,
     onFinished: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -129,10 +144,18 @@ fun VideoPlayer(
     val videoName = item.video?.fileName ?: "Unknown"
     val videoUrl = "${AppConfig.BASE_URL}/api/media/$videoId/download"
     
-    Log.d("VideoPlayer", "🎥 Initializing video: $videoName, Local: ${localFile != null}")
+    Log.d("VideoPlayer", "🎥 Initializing video: $videoName, Mode: $displayMode, Local: ${localFile != null}")
     
     var hasError by remember(item.id) { mutableStateOf(false) }
     var errorMessage by remember(item.id) { mutableStateOf("") }
+    
+    // Map display mode to ExoPlayer resize mode
+    val playerResizeMode = when (displayMode) {
+        "FIT" -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+        "FILL" -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        "STRETCH" -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
     
     // Create player instance tied to the item ID with SSL-configured OkHttp
     val exoPlayer = remember(item.id) {
@@ -192,10 +215,12 @@ fun VideoPlayer(
                 PlayerView(it).apply {
                     player = exoPlayer
                     useController = false
+                    resizeMode = playerResizeMode
                 }
             },
             update = {
                 it.player = exoPlayer
+                it.resizeMode = playerResizeMode
             },
             modifier = Modifier.fillMaxSize()
         )

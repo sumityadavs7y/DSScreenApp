@@ -8,9 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RotateLeft
-import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,12 +41,9 @@ fun StatsScreen(
     licenseExpiry: String?,
     playbackError: PlaybackErrorInfo?,
     isSocketConnected: Boolean,
-    currentRotation: String,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit,
-    onRotateClockwise: () -> Unit,
-    onRotateAntiClockwise: () -> Unit,
-    onSetAutoRotation: () -> Unit
+    onOpenSettings: () -> Unit
 ) {
     val TAG = "StatsScreen"
     Log.d(TAG, "🖥️ Rendering StatsScreen - Expiry: $licenseExpiry, Items: ${playlist.items.size}")
@@ -130,6 +125,24 @@ fun StatsScreen(
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     Button(
+                        onClick = onOpenSettings,
+                        colors = ButtonDefaults.colors(
+                            containerColor = Color(0xFF424242),
+                            focusedContainerColor = Color(0xFF616161)
+                        )
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Settings")
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Button(
                         onClick = onReset,
                         colors = ButtonDefaults.colors(
                             containerColor = Color.Red.copy(alpha = 0.7f),
@@ -177,143 +190,6 @@ fun StatsScreen(
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = Color.DarkGray
                     )
-                    
-                    Spacer(modifier = Modifier.height(24.dp))
-                    
-                    // Screen Rotation Section
-                    Surface(
-                        modifier = Modifier.width(350.dp),
-                        shape = RectangleShape,
-                        colors = SurfaceDefaults.colors(
-                            containerColor = Color(0xFF1E1E1E)
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp)
-                        ) {
-                            // Section Header
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Refresh,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Screen Rotation",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = Color.White
-                                )
-                            }
-                            
-                            Spacer(modifier = Modifier.height(8.dp))
-                            
-                            // Current Rotation Display
-                            Text(
-                                text = getRotationLabel(currentRotation),
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            
-                            Spacer(modifier = Modifier.height(16.dp))
-                            
-                            // Rotation Buttons
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                // Clockwise Button
-                                Button(
-                                    onClick = onRotateClockwise,
-                                    modifier = Modifier.weight(1f).height(60.dp),
-                                    colors = ButtonDefaults.colors(
-                                        containerColor = Color(0xFF2196F3),
-                                        focusedContainerColor = Color(0xFF42A5F5)
-                                    )
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.RotateRight,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(24.dp),
-                                            tint = Color.White
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "CW",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White
-                                        )
-                                    }
-                                }
-                                
-                                // Anti-Clockwise Button
-                                Button(
-                                    onClick = onRotateAntiClockwise,
-                                    modifier = Modifier.weight(1f).height(60.dp),
-                                    colors = ButtonDefaults.colors(
-                                        containerColor = Color(0xFF2196F3),
-                                        focusedContainerColor = Color(0xFF42A5F5)
-                                    )
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.RotateLeft,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(24.dp),
-                                            tint = Color.White
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "CCW",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White
-                                        )
-                                    }
-                                }
-                                
-                                // Auto Button
-                                Button(
-                                    onClick = onSetAutoRotation,
-                                    modifier = Modifier.weight(1f).height(60.dp),
-                                    colors = ButtonDefaults.colors(
-                                        containerColor = if (currentRotation == "AUTO") 
-                                            Color(0xFF4CAF50) else Color(0xFF424242),
-                                        focusedContainerColor = if (currentRotation == "AUTO") 
-                                            Color(0xFF66BB6A) else Color(0xFF616161)
-                                    )
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(24.dp),
-                                            tint = Color.White
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "AUTO",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color.White
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     // Error Section (Conditional)
                     playbackError?.let {
@@ -406,16 +282,6 @@ private fun PlaylistItemRow(item: PlaylistItem) {
     }
 }
 
-private fun getRotationLabel(rotation: String): String {
-    return when (rotation) {
-        "AUTO" -> "Auto (Device Setting)"
-        "0" -> "Portrait (0°)"
-        "90" -> "Landscape (90°)"
-        "180" -> "Reverse Portrait (180°)"
-        "270" -> "Reverse Landscape (270°)"
-        else -> "Unknown"
-    }
-}
 
 /**
  * Pure logic helper to handle data processing for the Stats Screen.

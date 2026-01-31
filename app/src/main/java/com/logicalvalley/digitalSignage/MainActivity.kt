@@ -39,6 +39,7 @@ import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
 
 import androidx.activity.compose.BackHandler
 import com.logicalvalley.digitalSignage.ui.stats.StatsScreen
+import com.logicalvalley.digitalSignage.ui.settings.SettingsScreen
 
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -57,6 +58,10 @@ class MainActivity : ComponentActivity() {
     // StateFlow to hold current rotation
     private val _currentRotation = MutableStateFlow("AUTO")
     private val currentRotation: StateFlow<String> = _currentRotation.asStateFlow()
+    
+    // StateFlow to hold current display mode
+    private val _currentDisplayMode = MutableStateFlow("FIT")
+    private val currentDisplayMode: StateFlow<String> = _currentDisplayMode.asStateFlow()
 
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,6 +86,9 @@ class MainActivity : ComponentActivity() {
         // Load and apply saved rotation
         loadAndApplySavedRotation()
         
+        // Load saved display mode
+        loadSavedDisplayMode()
+        
         setContent {
             DigitalSignageLVTheme {
                 val viewModel: MainViewModel = viewModel()
@@ -90,9 +98,11 @@ class MainActivity : ComponentActivity() {
                 val isSocketConnected by viewModel.isSocketConnected.collectAsState()
                 val remoteCommand by viewModel.remoteCommand.collectAsState()
                 var showStats by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) }
                 
-                // Collect current rotation from StateFlow
+                // Collect current rotation and display mode from StateFlow
                 val currentRotationValue by currentRotation.collectAsState()
+                val currentDisplayModeValue by currentDisplayMode.collectAsState()
 
                 LaunchedEffect(state) {
                     if (state is AppState.RegistrationRequired) {
@@ -173,34 +183,49 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         is AppState.Playing -> {
-                            if (showStats) {
-                                StatsScreen(
-                                    playlist = s.playlist,
-                                    cacheProgress = s.cacheProgress,
-                                    licenseExpiry = licenseExpiry,
-                                    playbackError = playbackError,
-                                    isSocketConnected = isSocketConnected,
-                                    currentRotation = currentRotationValue,
-                                    onBackToPlaylist = { showStats = false },
-                                    onReset = { 
-                                        showStats = false
-                                        viewModel.manualDeregister() 
-                                    },
-                                    onRotateClockwise = { rotateClockwise() },
-                                    onRotateAntiClockwise = { rotateAntiClockwise() },
-                                    onSetAutoRotation = { setAutoRotation() }
-                                )
-                            } else {
-                                BackHandler {
-                                    showStats = true
+                            when {
+                                showSettings -> {
+                                    SettingsScreen(
+                                        currentRotation = currentRotationValue,
+                                        currentDisplayMode = currentDisplayModeValue,
+                                        onBack = { showSettings = false },
+                                        onRotateClockwise = { rotateClockwise() },
+                                        onRotateAntiClockwise = { rotateAntiClockwise() },
+                                        onSetAutoRotation = { setAutoRotation() },
+                                        onSetDisplayMode = { mode -> setDisplayMode(mode) }
+                                    )
                                 }
-                                PlayerScreen(
-                                    playlist = s.playlist,
-                                    onBack = { showStats = true },
-                                    onError = { videoName, error ->
-                                        viewModel.reportPlaybackError(videoName, error)
+                                showStats -> {
+                                    StatsScreen(
+                                        playlist = s.playlist,
+                                        cacheProgress = s.cacheProgress,
+                                        licenseExpiry = licenseExpiry,
+                                        playbackError = playbackError,
+                                        isSocketConnected = isSocketConnected,
+                                        onBackToPlaylist = { showStats = false },
+                                        onReset = { 
+                                            showStats = false
+                                            viewModel.manualDeregister() 
+                                        },
+                                        onOpenSettings = {
+                                            showStats = false
+                                            showSettings = true
+                                        }
+                                    )
+                                }
+                                else -> {
+                                    BackHandler {
+                                        showStats = true
                                     }
-                                )
+                                    PlayerScreen(
+                                        playlist = s.playlist,
+                                        displayMode = currentDisplayModeValue,
+                                        onBack = { showStats = true },
+                                        onError = { videoName, error ->
+                                            viewModel.reportPlaybackError(videoName, error)
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -391,6 +416,30 @@ class MainActivity : ComponentActivity() {
             ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE -> "REVERSE_LANDSCAPE"
             ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR -> "FULL_SENSOR"
             else -> "UNKNOWN"
+        }
+    }
+
+    /**
+     * Load saved display mode preference
+     */
+    private fun loadSavedDisplayMode() {
+        lifecycleScope.launch {
+            val savedMode = dataStoreManager.displayMode.first() ?: "FIT"
+            Log.d(TAG, "📺 Loading saved display mode: $savedMode")
+            _currentDisplayMode.value = savedMode
+        }
+    }
+
+    /**
+     * Set display mode and save preference
+     * @param mode One of: "FIT", "FILL", "STRETCH"
+     */
+    private fun setDisplayMode(mode: String) {
+        lifecycleScope.launch {
+            Log.d(TAG, "📺 Setting display mode to: $mode")
+            _currentDisplayMode.value = mode
+            dataStoreManager.saveDisplayMode(mode)
+            Log.d(TAG, "✅ Display mode saved: $mode")
         }
     }
 }

@@ -19,6 +19,7 @@ class DataStoreManager(private val context: Context) {
         val SAVED_PLAYLIST = stringPreferencesKey("saved_playlist")
         val LICENSE_EXPIRY = stringPreferencesKey("license_expiry")
         val SCREEN_ROTATION = stringPreferencesKey("screen_rotation")
+        val DISPLAY_MODE = stringPreferencesKey("display_mode")
     }
 
     val playlistCode: Flow<String?> = context.dataStore.data
@@ -84,6 +85,17 @@ class DataStoreManager(private val context: Context) {
     suspend fun saveScreenRotation(rotation: String) {
         context.dataStore.edit { preferences ->
             preferences[SCREEN_ROTATION] = rotation
+        }
+    }
+
+    val displayMode: Flow<String?> = context.dataStore.data
+        .map { preferences ->
+            preferences[DISPLAY_MODE]
+        }
+
+    suspend fun saveDisplayMode(mode: String) {
+        context.dataStore.edit { preferences ->
+            preferences[DISPLAY_MODE] = mode
         }
     }
 }
