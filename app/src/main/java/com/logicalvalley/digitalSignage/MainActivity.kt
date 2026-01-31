@@ -1,6 +1,7 @@
 package com.logicalvalley.digitalSignage
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -27,6 +28,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.*
 import androidx.compose.material3.CircularProgressIndicator
+import com.logicalvalley.digitalSignage.data.local.DataStoreManager
 import com.logicalvalley.digitalSignage.service.KeepAliveService
 import com.logicalvalley.digitalSignage.ui.loading.LoadingScreen
 import com.logicalvalley.digitalSignage.ui.player.PlayerScreen
@@ -41,15 +43,28 @@ import com.logicalvalley.digitalSignage.ui.stats.StatsScreen
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.util.Log
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val TAG = "MainActivity"
+    private lateinit var dataStoreManager: DataStoreManager
+    
+    // StateFlow to hold current rotation
+    private val _currentRotation = MutableStateFlow("AUTO")
+    private val currentRotation: StateFlow<String> = _currentRotation.asStateFlow()
 
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
         Log.d(TAG, "🚀 MainActivity onCreate")
+        
+        dataStoreManager = DataStoreManager(this)
         
         // Keep screen on at all times
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -62,6 +77,10 @@ class MainActivity : ComponentActivity() {
         
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
+        
+        // Load and apply saved rotation
+        loadAndApplySavedRotation()
+        
         setContent {
             DigitalSignageLVTheme {
                 val viewModel: MainViewModel = viewModel()
@@ -71,6 +90,9 @@ class MainActivity : ComponentActivity() {
                 val isSocketConnected by viewModel.isSocketConnected.collectAsState()
                 val remoteCommand by viewModel.remoteCommand.collectAsState()
                 var showStats by remember { mutableStateOf(false) }
+                
+                // Collect current rotation from StateFlow
+                val currentRotationValue by currentRotation.collectAsState()
 
                 LaunchedEffect(state) {
                     if (state is AppState.RegistrationRequired) {
@@ -158,11 +180,15 @@ class MainActivity : ComponentActivity() {
                                     licenseExpiry = licenseExpiry,
                                     playbackError = playbackError,
                                     isSocketConnected = isSocketConnected,
+                                    currentRotation = currentRotationValue,
                                     onBackToPlaylist = { showStats = false },
                                     onReset = { 
                                         showStats = false
                                         viewModel.manualDeregister() 
-                                    }
+                                    },
+                                    onRotateClockwise = { rotateClockwise() },
+                                    onRotateAntiClockwise = { rotateAntiClockwise() },
+                                    onSetAutoRotation = { setAutoRotation() }
                                 )
                             } else {
                                 BackHandler {
@@ -243,5 +269,102 @@ class MainActivity : ComponentActivity() {
                 Log.d(TAG, "✅ Battery optimization already disabled")
             }
         }
+    }
+
+    /**
+     * Load saved rotation preference and apply it
+     */
+    private fun loadAndApplySavedRotation() {
+        lifecycleScope.launch {
+            val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
+            Log.d(TAG, "🔄 Loading saved rotation: $savedRotation")
+            _currentRotation.value = savedRotation
+            applyRotation(savedRotation)
+        }
+    }
+
+    /**
+     * Rotate screen clockwise (90° rotation)
+     */
+    private fun rotateClockwise() {
+        lifecycleScope.launch {
+            val current = _currentRotation.value
+            Log.d(TAG, "↻ Clockwise rotation from: $current")
+            
+            val nextRotation = if (current == "AUTO") {
+                "90" // Start from landscape when rotating from auto
+            } else {
+                val currentAngle = current.toIntOrNull() ?: 0
+                val nextAngle = (currentAngle + 90) % 360
+                nextAngle.toString()
+            }
+            
+            Log.d(TAG, "↻ Rotating to: $nextRotation")
+            setScreenRotation(nextRotation)
+        }
+    }
+
+    /**
+     * Rotate screen anti-clockwise (270° rotation / -90°)
+     */
+    private fun rotateAntiClockwise() {
+        lifecycleScope.launch {
+            val current = _currentRotation.value
+            Log.d(TAG, "↺ Anti-clockwise rotation from: $current")
+            
+            val nextRotation = if (current == "AUTO") {
+                "270" // Start from reverse landscape when rotating from auto
+            } else {
+                val currentAngle = current.toIntOrNull() ?: 0
+                val nextAngle = (currentAngle - 90 + 360) % 360
+                nextAngle.toString()
+            }
+            
+            Log.d(TAG, "↺ Rotating to: $nextRotation")
+            setScreenRotation(nextRotation)
+        }
+    }
+
+    /**
+     * Set screen rotation to auto (device setting)
+     */
+    private fun setAutoRotation() {
+        Log.d(TAG, "🔄 Setting rotation to AUTO")
+        setScreenRotation("AUTO")
+    }
+
+    /**
+     * Set screen rotation and save preference
+     * @param rotation One of: "AUTO", "0", "90", "180", "270"
+     */
+    private fun setScreenRotation(rotation: String) {
+        lifecycleScope.launch {
+            // Update StateFlow immediately for UI
+            _currentRotation.value = rotation
+            
+            // Apply rotation to activity
+            applyRotation(rotation)
+            
+            // Save to DataStore for persistence
+            dataStoreManager.saveScreenRotation(rotation)
+            Log.d(TAG, "✅ Screen rotation saved: $rotation")
+        }
+    }
+
+    /**
+     * Apply rotation to the activity
+     */
+    private fun applyRotation(rotation: String) {
+        val orientation = when (rotation) {
+            "0" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            "90" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            "180" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+            "270" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+            "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        
+        requestedOrientation = orientation
+        Log.d(TAG, "🔄 Applied orientation: $rotation")
     }
 }
