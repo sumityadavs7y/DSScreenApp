@@ -4,6 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.logicalvalley.digitalSignage.config.AppConfig
 import com.logicalvalley.digitalSignage.data.model.RegisterResponse
+import com.logicalvalley.digitalSignage.util.SSLConfig
 import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
@@ -13,6 +14,9 @@ class SocketManager {
     private val TAG = "SocketManager"
     private var socket: Socket? = null
     private val gson = Gson()
+
+    // Create OkHttpClient with SSL configuration
+    private val okHttpClient = SSLConfig.createOkHttpClient()
 
     fun connect(
         baseUrl: String = AppConfig.BASE_URL,
@@ -24,6 +28,9 @@ class SocketManager {
             val opts = IO.Options().apply {
                 forceNew = true
                 reconnection = true
+                // Use custom OkHttpClient with SSL configuration
+                callFactory = okHttpClient
+                webSocketFactory = okHttpClient
             }
             socket = IO.socket(baseUrl, opts)
             

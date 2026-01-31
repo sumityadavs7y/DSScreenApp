@@ -16,7 +16,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
@@ -24,6 +26,7 @@ import com.logicalvalley.digitalSignage.config.AppConfig
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
 import com.logicalvalley.digitalSignage.data.model.Playlist
 import com.logicalvalley.digitalSignage.data.model.PlaylistItem
+import com.logicalvalley.digitalSignage.util.SSLConfig
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -131,12 +134,18 @@ fun VideoPlayer(
     var hasError by remember(item.id) { mutableStateOf(false) }
     var errorMessage by remember(item.id) { mutableStateOf("") }
     
-    // Create player instance tied to the item ID
+    // Create player instance tied to the item ID with SSL-configured OkHttp
     val exoPlayer = remember(item.id) {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ALL
-            playWhenReady = true
-        }
+        val dataSourceFactory = OkHttpDataSource.Factory(SSLConfig.createOkHttpClient())
+        val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
+        
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+            .apply {
+                repeatMode = Player.REPEAT_MODE_ALL
+                playWhenReady = true
+            }
     }
 
     // Effect to handle player setup and release

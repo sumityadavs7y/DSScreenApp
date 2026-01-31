@@ -1,6 +1,7 @@
 package com.logicalvalley.digitalSignage.data.api
 
 import com.logicalvalley.digitalSignage.config.AppConfig
+import com.logicalvalley.digitalSignage.util.SSLConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -13,7 +14,8 @@ object RetrofitClient {
         level = HttpLoggingInterceptor.Level.BODY
     }
 
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = SSLConfig.createOkHttpClient()
+        .newBuilder()
         .addInterceptor(logging)
         .build()
 

@@ -64,6 +64,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private var currentPlaylistJson: String? = null
     private var lastLicenseExpiry: Date? = null
+    private var isCaching = false
+    private var cachedItemIds = mutableSetOf<String>()
 
     init {
         socketManager.connect(onStatusChange = { connected ->
@@ -439,15 +441,67 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startCaching(playlist: Playlist) {
+        if (isCaching) {
+            Log.d(TAG, "⏩ Caching already in progress, skipping...")
+            return
+        }
+        
         viewModelScope.launch {
+            isCaching = true
+            Log.d(TAG, "🔽 Starting media caching for ${playlist.items.size} items...")
+            
+            // Update progress immediately
             _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
             _appState.value = AppState.Playing(playlist, _cacheProgress.value)
             
-            playlist.items.forEach { item ->
-                cacheManager.downloadMedia(item, baseUrl)
+            var successCount = 0
+            var failureCount = 0
+            var skippedCount = 0
+            
+            playlist.items.forEachIndexed { index, item ->
+                val fileName = item.video?.fileName ?: "Unknown"
+                val itemId = item.id
+                
+                // Skip if already successfully cached
+                if (cachedItemIds.contains(itemId)) {
+                    skippedCount++
+                    Log.d(TAG, "⏭️ Already cached (${index + 1}/${playlist.items.size}): $fileName")
+                    return@forEachIndexed
+                }
+                
+                // Check if file exists before attempting download
+                if (cacheManager.getLocalFile(item) != null) {
+                    cachedItemIds.add(itemId)
+                    skippedCount++
+                    Log.d(TAG, "⏭️ File exists (${index + 1}/${playlist.items.size}): $fileName")
+                    return@forEachIndexed
+                }
+                
+                Log.d(TAG, "📥 Caching item ${index + 1}/${playlist.items.size}: $fileName")
+                
+                val success = try {
+                    cacheManager.downloadMedia(item, baseUrl)
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Exception caching $fileName", e)
+                    false
+                }
+                
+                if (success) {
+                    successCount++
+                    cachedItemIds.add(itemId)
+                    Log.d(TAG, "✅ Successfully cached: $fileName")
+                } else {
+                    failureCount++
+                    Log.e(TAG, "❌ Failed to cache: $fileName")
+                }
+                
+                // Update progress after each item
                 _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
                 _appState.value = AppState.Playing(playlist, _cacheProgress.value)
             }
+            
+            isCaching = false
+            Log.d(TAG, "🏁 Caching complete: $successCount downloaded, $skippedCount already cached, $failureCount failed")
         }
     }
 
@@ -466,6 +520,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Log.d(TAG, "🧹 Clearing local registration data...")
             // Force state to Loading to ensure UI switches and QR init isn't blocked
             _appState.value = AppState.Loading
+            
+            // Clear caching state
+            isCaching = false
+            cachedItemIds.clear()
             
             dataStoreManager.savePlaylistCode("")
             dataStoreManager.savePlaylistId("")
