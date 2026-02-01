@@ -32,6 +32,113 @@ This document explains how the Digital Signage app is configured to start automa
 - App respects device orientation settings
 - No forced orientation lock
 
+### 7. **TV Launcher Integration**
+- Appears in Android TV launcher
+- Visible in TV assistant apps and startup managers
+- Compatible with TV box startup configuration tools
+
+## 📺 TV Assistant App Visibility
+
+### Making the App Appear in TV Startup Managers
+
+The app is now configured with multiple intent categories to ensure it appears in TV assistant apps and startup managers:
+
+```xml
+<intent-filter>
+    <action android:name="android.intent.action.MAIN" />
+    <category android:name="android.intent.category.LAUNCHER" />
+    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+    <category android:name="android.intent.category.HOME" />
+    <category android:name="android.intent.category.DEFAULT" />
+</intent-filter>
+```
+
+**What these do:**
+- `LAUNCHER` - Makes app visible in standard Android launcher
+- `LEANBACK_LAUNCHER` - Makes app visible in Android TV launcher
+- `HOME` - Makes app eligible as a home screen replacement/startup app
+- `DEFAULT` - Ensures visibility to system-level startup managers
+
+### If Your App Still Doesn't Appear
+
+**Step 1: Reinstall the App**
+```bash
+# Uninstall first
+./gradlew uninstallDebug
+
+# Then install
+./gradlew installDebug
+```
+> TV assistants often scan for apps only during installation
+
+**Step 2: Restart Your TV/Box Completely**
+- Power off the device completely
+- Wait 10 seconds
+- Power it back on
+- This forces the TV assistant to rescan all apps
+
+**Step 3: Check TV Assistant Settings**
+1. Open your TV assistant app (e.g., "Startup Manager", "TV Launcher", etc.)
+2. Go to Settings or App Management
+3. Look for "Digital Signage LV" or "DigitalSignageLV"
+4. If found but disabled, enable it and set it to start on boot
+
+**Step 4: Verify App Installation**
+1. Go to Android Settings > Apps
+2. Find "Digital Signage LV"
+3. Ensure it has all required permissions:
+   - Autostart / Boot completed
+   - Display over other apps (if applicable)
+   - Battery optimization disabled
+
+**Step 5: Check Device Settings**
+Some TV boxes have a built-in startup manager:
+1. Settings > Device Preferences > Apps
+2. Look for "Startup apps" or "Auto-start apps"
+3. Enable "Digital Signage LV"
+
+### Common TV Assistant Apps
+
+The app should now appear in these common TV startup managers:
+- **Android TV Home** - Built-in Android TV launcher
+- **Sideload Launcher** - Popular for sideloaded apps
+- **Startup Manager** - Available on many Chinese TV boxes
+- **Boot Manager** - Common on Android TV boxes
+- **App Starter** - Available on some TV boxes
+
+### Alternative: Manual Autostart via ADB
+
+If your TV assistant still doesn't recognize the app, you can use ADB to start it automatically:
+
+**Create a startup script on your computer:**
+```bash
+#!/bin/bash
+# File: start_signage.sh
+adb connect YOUR_TV_IP:5555
+adb shell am start -n com.logicalvalley.digitalSignage/.MainActivity
+```
+
+**Or set up a boot trigger on the TV itself** (requires root or custom ROM):
+```bash
+# On the TV/box (if you have shell access)
+echo "am start -n com.logicalvalley.digitalSignage/.MainActivity" >> /data/local/bootscript.sh
+```
+
+### Verification
+
+To verify the app is properly configured for TV assistants:
+
+```bash
+# Check if app is registered as a launcher
+adb shell dumpsys package com.logicalvalley.digitalSignage | grep -A 20 "android.intent.action.MAIN"
+
+# You should see:
+# - android.intent.category.LAUNCHER
+# - android.intent.category.LEANBACK_LAUNCHER
+# - android.intent.category.HOME
+# - android.intent.category.DEFAULT
+```
+
 ## 📋 Required Permissions
 
 The following permissions are included in `AndroidManifest.xml`:
