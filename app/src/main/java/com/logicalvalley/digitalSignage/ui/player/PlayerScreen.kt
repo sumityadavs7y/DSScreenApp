@@ -43,11 +43,13 @@ fun PlayerScreen(
     val context = LocalContext.current
     val cacheManager = remember { MediaCacheManager(context) }
     var currentIndex by remember { mutableIntStateOf(0) }
+    var playCounter by remember { mutableIntStateOf(0) }
     val currentItem = playlist.items.getOrNull(currentIndex)
 
     if (currentItem != null) {
         val localFile = cacheManager.getLocalFile(currentItem)
         val isVideo = currentItem.video?.mimeType?.startsWith("video") == true
+        val playKey = "${currentItem.id}_$playCounter"
         
         // Determine actual display mode: use custom if mode is CUSTOM, otherwise use global
         val actualDisplayMode = if (displayMode == "CUSTOM") {
@@ -60,9 +62,11 @@ fun PlayerScreen(
             VideoPlayer(
                 item = currentItem,
                 localFile = localFile,
+                playKey = playKey,
                 displayMode = actualDisplayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
+                    playCounter++
                 },
                 onError = { reason ->
                     onError(currentItem.video?.fileName ?: "Unknown", reason)
@@ -72,9 +76,11 @@ fun PlayerScreen(
             ImagePlayer(
                 item = currentItem,
                 localFile = localFile,
+                playKey = playKey,
                 displayMode = actualDisplayMode,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
+                    playCounter++
                 },
                 onError = { reason ->
                     onError(currentItem.video?.fileName ?: "Unknown", reason)
@@ -88,16 +94,22 @@ fun PlayerScreen(
 fun ImagePlayer(
     item: PlaylistItem,
     localFile: File?,
+    playKey: String,
     displayMode: String,
     onFinished: () -> Unit,
     onError: (String) -> Unit
 ) {
     val durationMillis = (item.duration * 1000L).coerceAtLeast(1000L)
     val imageUrl = localFile ?: "${AppConfig.BASE_URL}/api/media/${item.video?.id}/download"
-    Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, Mode: $displayMode, Local: ${localFile != null}")
+    
+    if (localFile != null && localFile.exists()) {
+        Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, PlayKey: $playKey, Mode: $displayMode, 📦 Using cached file")
+    } else {
+        Log.d("ImagePlayer", "🖼️ Displaying image: ${item.video?.fileName}, PlayKey: $playKey, Mode: $displayMode, 🌐 Streaming from URL")
+    }
 
-    var hasError by remember(item.id) { mutableStateOf(false) }
-    var errorMessage by remember(item.id) { mutableStateOf("") }
+    var hasError by remember(playKey) { mutableStateOf(false) }
+    var errorMessage by remember(playKey) { mutableStateOf("") }
 
     // Map display mode to ContentScale
     val contentScale = when (displayMode) {
@@ -130,7 +142,7 @@ fun ImagePlayer(
         }
     }
 
-    LaunchedEffect(item.id) {
+    LaunchedEffect(playKey) {
         delay(durationMillis)
         if (!hasError) {
             onFinished()
@@ -143,6 +155,7 @@ fun ImagePlayer(
 fun VideoPlayer(
     item: PlaylistItem,
     localFile: File?,
+    playKey: String,
     displayMode: String,
     onFinished: () -> Unit,
     onError: (String) -> Unit
@@ -152,10 +165,10 @@ fun VideoPlayer(
     val videoName = item.video?.fileName ?: "Unknown"
     val videoUrl = "${AppConfig.BASE_URL}/api/media/$videoId/download"
     
-    Log.d("VideoPlayer", "🎥 Initializing video: $videoName, Mode: $displayMode, Local: ${localFile != null}")
+    Log.d("VideoPlayer", "🎥 Initializing video: $videoName, PlayKey: $playKey, Mode: $displayMode, Local: ${localFile != null}")
     
-    var hasError by remember(item.id) { mutableStateOf(false) }
-    var errorMessage by remember(item.id) { mutableStateOf("") }
+    var hasError by remember(playKey) { mutableStateOf(false) }
+    var errorMessage by remember(playKey) { mutableStateOf("") }
     
     // Map display mode to ExoPlayer resize mode
     val playerResizeMode = when (displayMode) {
@@ -165,9 +178,11 @@ fun VideoPlayer(
         else -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
     
-    // Create player instance tied to the item ID with SSL-configured OkHttp
-    val exoPlayer = remember(item.id) {
-        val dataSourceFactory = OkHttpDataSource.Factory(SSLConfig.createOkHttpClient())
+    // Create player instance tied to the play key with SSL-configured OkHttp
+    val exoPlayer = remember(playKey) {
+        // Use DefaultDataSource for both HTTP and local file support
+        val httpDataSourceFactory = OkHttpDataSource.Factory(SSLConfig.createOkHttpClient())
+        val dataSourceFactory = androidx.media3.datasource.DefaultDataSource.Factory(context, httpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
         
         ExoPlayer.Builder(context)
@@ -180,7 +195,7 @@ fun VideoPlayer(
     }
 
     // Effect to handle player setup and release
-    DisposableEffect(item.id) {
+    DisposableEffect(playKey) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 Log.e("VideoPlayer", "❌ Playback error for $videoName: ${error.message}")
@@ -192,8 +207,11 @@ fun VideoPlayer(
         exoPlayer.addListener(listener)
 
         val mediaItem = if (localFile != null && localFile.exists()) {
-            MediaItem.fromUri(localFile.absolutePath)
+            Log.d("VideoPlayer", "📦 Using cached file: ${localFile.name}")
+            Log.d("VideoPlayer", "📂 File path: ${localFile.absolutePath}")
+            MediaItem.fromUri(android.net.Uri.fromFile(localFile))
         } else {
+            Log.d("VideoPlayer", "🌐 Streaming from URL: $videoUrl")
             MediaItem.fromUri(videoUrl)
         }
         
@@ -208,7 +226,7 @@ fun VideoPlayer(
     }
 
     // Effect to handle duration-based skipping
-    LaunchedEffect(item.id) {
+    LaunchedEffect(playKey) {
         val durationMillis = (item.duration * 1000L).coerceAtLeast(1000L)
         delay(durationMillis)
         if (!hasError) {

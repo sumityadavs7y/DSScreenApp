@@ -66,6 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastLicenseExpiry: Date? = null
     private var isCaching = false
     private var cachedItemIds = mutableSetOf<String>()
+    private var qrExpiryTime: Date? = null
 
     init {
         socketManager.connect(onStatusChange = { connected ->
@@ -116,9 +117,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun parseDate(dateStr: String?): Date? {
         if (dateStr.isNullOrEmpty() || dateStr == "null") return null
         val cleanedDate = dateStr.replace("\"", "").trim()
+        
+        Log.d(TAG, "🔍 Parsing date string: '$cleanedDate'")
+        
         val formats = listOf(
             "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss.SSSX",
             "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssX",
             "yyyy-MM-dd'T'HH:mm:ss",
             "yyyy-MM-dd HH:mm:ss",
             "yyyy-MM-dd"
@@ -126,11 +132,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         for (format in formats) {
             try {
-                return SimpleDateFormat(format, Locale.US).apply {
-                    if (format.contains("Z")) timeZone = TimeZone.getTimeZone("UTC")
-                }.parse(cleanedDate)
-            } catch (e: Exception) {}
+                val sdf = SimpleDateFormat(format, Locale.US).apply {
+                    if (format.contains("Z") && !format.contains("X")) {
+                        timeZone = TimeZone.getTimeZone("UTC")
+                    }
+                }
+                val parsed = sdf.parse(cleanedDate)
+                Log.d(TAG, "✅ Successfully parsed with format: $format → $parsed")
+                return parsed
+            } catch (e: Exception) {
+                Log.d(TAG, "⚠️ Format '$format' failed: ${e.message}")
+            }
         }
+        
+        Log.e(TAG, "❌ All date formats failed for: '$cleanedDate'")
         return null
     }
 
@@ -215,6 +230,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (response.success && response.data != null) {
                         Log.d(TAG, "✅ QR Session fetched successfully")
                         Log.d(TAG, "🔗 QR URL: ${response.data.registrationUrl}")
+                        Log.d(TAG, "🔑 Session Token: ${response.data.sessionToken}")
+                        Log.d(TAG, "⏰ QR Expires at (raw): ${response.data.expiresAt}")
+                        
+                        // Store expiry time for periodic checking
+                        qrExpiryTime = parseDate(response.data.expiresAt)
+                        if (qrExpiryTime != null) {
+                            val now = Date()
+                            val expiryMillis = qrExpiryTime!!.time
+                            val nowMillis = now.time
+                            val diffMillis = expiryMillis - nowMillis
+                            val minutesUntilExpiry = diffMillis / 1000 / 60
+                            val secondsUntilExpiry = diffMillis / 1000
+                            
+                            Log.d(TAG, "⏰ Parsed expiry: $qrExpiryTime")
+                            Log.d(TAG, "⏰ Current time: $now")
+                            Log.d(TAG, "⏰ Expiry millis: $expiryMillis")
+                            Log.d(TAG, "⏰ Now millis: $nowMillis")
+                            Log.d(TAG, "⏰ Diff millis: $diffMillis")
+                            Log.d(TAG, "⏰ QR will expire in $minutesUntilExpiry minutes ($secondsUntilExpiry seconds)")
+                            
+                            // Safety check: If expiry is more than 10 minutes in the future, something is wrong
+                            if (minutesUntilExpiry > 10) {
+                                Log.e(TAG, "❌ WARNING: QR expiry time seems wrong! Expected ~5 minutes, got $minutesUntilExpiry minutes")
+                                Log.e(TAG, "❌ This is likely a timezone or date parsing issue")
+                                Log.e(TAG, "❌ Forcing QR to expire in 4 minutes as fallback")
+                                qrExpiryTime = Date(nowMillis + (4 * 60 * 1000))
+                                Log.d(TAG, "✅ Corrected expiry: $qrExpiryTime (4 minutes from now)")
+                            }
+                        } else {
+                            Log.e(TAG, "❌ Could not parse QR expiry time: ${response.data.expiresAt}")
+                            // Fallback: Set expiry to 4 minutes from now
+                            qrExpiryTime = Date(Date().time + (4 * 60 * 1000))
+                            Log.w(TAG, "⚠️ Using fallback expiry: $qrExpiryTime (4 minutes from now)")
+                        }
+                        
                         socketManager.joinDeviceRoom(deviceUid)
                         _appState.value = AppState.RegistrationRequired(response.data)
                     } else {
@@ -229,11 +279,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+
     private fun startPeriodicCheck() {
         viewModelScope.launch {
             while (true) {
                 delay(30000) // 30 seconds
                 Log.d(TAG, "⏰ Periodic check triggered...")
+                
+                // Check if QR needs refresh (on registration screen)
+                if (_appState.value is AppState.RegistrationRequired) {
+                    val expiry = qrExpiryTime
+                    if (expiry != null) {
+                        val now = Date()
+                        val secondsUntilExpiry = (expiry.time - now.time) / 1000
+                        
+                        // Refresh 90 seconds before expiry (enough buffer for periodic check + network delay)
+                        // Backend expires sessions in 5 minutes, so this refreshes at ~3.5 minutes
+                        if (secondsUntilExpiry <= 90) {
+                            Log.d(TAG, "🔄 QR expires in $secondsUntilExpiry seconds - auto-refreshing now!")
+                            initQrRegistration()
+                        } else {
+                            Log.d(TAG, "✅ QR still valid - expires in ${secondsUntilExpiry / 60} minutes")
+                        }
+                    } else {
+                        Log.d(TAG, "⚠️ On registration screen but no QR expiry time set")
+                    }
+                }
                 
                 // Send socket ping if playing
                 if (_appState.value is AppState.Playing) {
@@ -405,6 +476,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             Log.d(TAG, "✅ Registration Success Flow Started")
             
+            // Clear QR expiry time since registration is complete
+            qrExpiryTime = null
+            
             // Extract playlist and device from either data wrapper or top level
             val playlist = response.data?.playlist ?: response.topLevelPlaylist
             val device = response.data?.device ?: response.topLevelDevice
@@ -518,6 +592,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetRegistration() {
         viewModelScope.launch {
             Log.d(TAG, "🧹 Clearing local registration data...")
+            // Clear QR expiry time
+            qrExpiryTime = null
+            
             // Force state to Loading to ensure UI switches and QR init isn't blocked
             _appState.value = AppState.Loading
             

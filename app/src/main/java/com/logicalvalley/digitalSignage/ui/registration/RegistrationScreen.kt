@@ -45,17 +45,23 @@ fun RegistrationScreen(
     var showQr by remember { mutableStateOf(true) }
 
     // Decode Base64 QR code to Bitmap for more reliable rendering
-    val qrBitmap = remember(qrData?.qrCodeDataUrl) {
+    // Use sessionToken as key to force refresh when QR changes
+    val qrBitmap = remember(qrData?.sessionToken) {
         qrData?.let { 
-            Log.d("RegistrationScreen", "🔗 QR representation URL: ${it.registrationUrl}")
+            Log.d("RegistrationScreen", "🔄 QR Data Updated - Session: ${it.sessionToken}")
+            Log.d("RegistrationScreen", "🔗 QR URL: ${it.registrationUrl}")
+            Log.d("RegistrationScreen", "⏰ QR Expires: ${it.expiresAt}")
         }
         qrData?.qrCodeDataUrl?.let { dataUrl ->
             try {
                 if (dataUrl.startsWith("data:image")) {
                     val base64String = dataUrl.substringAfter(",")
                     val imageBytes = Base64.decode(base64String, Base64.DEFAULT)
-                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                    val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                    Log.d("RegistrationScreen", "✅ QR Bitmap decoded successfully")
+                    bitmap
                 } else {
+                    Log.w("RegistrationScreen", "⚠️ Invalid data URL format")
                     null
                 }
             } catch (e: Exception) {
@@ -95,42 +101,51 @@ fun RegistrationScreen(
                     .background(Color.White, shape = MaterialTheme.shapes.medium),
                 contentAlignment = Alignment.Center
             ) {
-                if (qrData != null) {
-                    SubcomposeAsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(qrBitmap)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Registration QR Code",
-                        modifier = Modifier.fillMaxSize().padding(16.dp),
-                        contentScale = ContentScale.Fit,
-                        loading = {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                if (qrData != null && qrBitmap != null) {
+                    // Use key to force recomposition when QR changes
+                    key(qrData.sessionToken) {
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(qrBitmap)
+                                .memoryCacheKey(qrData.sessionToken)
+                                .diskCacheKey(qrData.sessionToken)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Registration QR Code",
+                            modifier = Modifier.fillMaxSize().padding(16.dp),
+                            contentScale = ContentScale.Fit,
+                            loading = {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                }
+                            },
+                            error = {
+                                val errorMsg = it.result.throwable.message ?: "Unknown Error"
+                                Log.e("RegistrationScreen", "❌ QR Image Load Failed: $errorMsg")
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = Color.Red,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Text(
+                                        "Load Failed",
+                                        color = Color.Red,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            },
+                            onSuccess = { 
+                                Log.d("RegistrationScreen", "✅ QR Image Rendered - Session: ${qrData.sessionToken}") 
                             }
-                        },
-                        error = {
-                            val errorMsg = it.result.throwable.message ?: "Unknown Error"
-                            Log.e("RegistrationScreen", "❌ QR Image Load Failed: $errorMsg")
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = Color.Red,
-                                    modifier = Modifier.size(48.dp)
-                                )
-                                Text(
-                                    "Load Failed",
-                                    color = Color.Red,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                        },
-                        onSuccess = { Log.d("RegistrationScreen", "✅ QR Image Rendered Successfully") }
-                    )
+                        )
+                    }
+                } else if (qrData != null && qrBitmap == null) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 } else {
                     CircularProgressIndicator()
                 }

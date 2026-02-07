@@ -114,7 +114,7 @@ private fun PlaylistItemDisplayMode(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                   .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
