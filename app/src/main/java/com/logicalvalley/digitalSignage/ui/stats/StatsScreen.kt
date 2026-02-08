@@ -29,6 +29,8 @@ import java.util.concurrent.TimeUnit
 
 import androidx.compose.ui.res.painterResource
 import com.logicalvalley.digitalSignage.R
+import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
+import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
 
 /**
  * Robust UI for displaying device and playlist statistics.
@@ -41,9 +43,15 @@ fun StatsScreen(
     licenseExpiry: String?,
     playbackError: PlaybackErrorInfo?,
     isSocketConnected: Boolean,
+    failedDownloadCount: Int,
+    isRetrying: Boolean,
+    storageStats: MediaCacheManager.StorageStats?,
+    currentDownloadProgress: MediaCacheManager.DownloadProgress?,
+    overallDownloadStats: MainViewModel.OverallDownloadStats?,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onRetryDownloads: () -> Unit
 ) {
     val TAG = "StatsScreen"
     Log.d(TAG, "🖥️ Rendering StatsScreen - Expiry: $licenseExpiry, Items: ${playlist.items.size}")
@@ -124,6 +132,23 @@ fun StatsScreen(
                         Text("Back to Playlist")
                     }
                     Spacer(modifier = Modifier.width(16.dp))
+                    
+                    // Show retry button only when there are failed downloads AND retry is not in progress
+                    if (failedDownloadCount > 0 && !isRetrying) {
+                        Button(
+                            onClick = onRetryDownloads,
+                            colors = ButtonDefaults.colors(
+                                containerColor = Color(0xFFFF9800),
+                                focusedContainerColor = Color(0xFFFFA726)
+                            )
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("🔄 Retry Downloads ($failedDownloadCount)")
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                    }
+                    
                     Button(
                         onClick = onOpenSettings,
                         colors = ButtonDefaults.colors(
@@ -177,19 +202,150 @@ fun StatsScreen(
                         valueColor = if (isSocketConnected) Color.Green else Color.Red
                     )
                     StatItem(label = "Total Items", value = "${playlist.items.size}")
-                    StatItem(
-                        label = "Offline Ready", 
-                        value = "${(cacheProgress * 100).toInt()}%"
-                    )
+                    
+                    // Calculate cached items and sizes
+                    val cachedCount = (cacheProgress * playlist.items.size).toInt()
+                    val totalSize = playlist.items.sumOf { it.video?.fileSize ?: 0L }
+                    val totalSizeMB = totalSize / 1024 / 1024
+                    
+                    // Show detailed download progress or completion status
+                    overallDownloadStats?.let { stats ->
+                        // ACTIVE DOWNLOAD - Show real-time progress
+                        StatItem(
+                            label = "Download Progress",
+                            value = stats.getProgressText(),
+                            valueColor = Color(0xFF64B5F6)
+                        )
+                        
+                        // Currently downloading file
+                        stats.currentlyDownloading?.let { fileName ->
+                            currentDownloadProgress?.let { fileProgress ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    Text(
+                                        text = "Currently downloading:",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = Color.Gray
+                                    )
+                                    Text(
+                                        text = fileName,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.White,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = fileProgress.getProgressText(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF64B5F6)
+                                    )
+                                }
+                            }
+                        }
+                    } ?: run {
+                        // NOT ACTIVELY DOWNLOADING - Show enhanced summary
+                        StatItem(
+                            label = "Cached Items",
+                            value = "$cachedCount / ${playlist.items.size}"
+                        )
+                        
+                        StatItem(
+                            label = "Cache Progress",
+                            value = "${(cacheProgress * 100).toInt()}%",
+                            valueColor = when {
+                                cacheProgress >= 1.0f -> Color.Green
+                                cacheProgress > 0.5f -> Color(0xFF64B5F6)
+                                else -> Color(0xFFFF9800)
+                            }
+                        )
+                        
+                        // Show total size information
+                        if (totalSizeMB > 0) {
+                            val cachedSizeMB = (totalSizeMB * cacheProgress).toLong()
+                            StatItem(
+                                label = "Cached Data",
+                                value = "$cachedSizeMB / $totalSizeMB MB"
+                            )
+                        }
+                    }
+                    
+                    // Show download status
+                    if (isRetrying) {
+                        StatItem(
+                            label = "Download Status",
+                            value = "Retrying ($failedDownloadCount items)...",
+                            valueColor = Color(0xFFFF9800)
+                        )
+                    } else if (failedDownloadCount > 0) {
+                        StatItem(
+                            label = "Download Status",
+                            value = "$failedDownloadCount failed",
+                            valueColor = Color.Red
+                        )
+                    } else if (overallDownloadStats != null) {
+                        StatItem(
+                            label = "Download Status",
+                            value = "In Progress...",
+                            valueColor = Color(0xFF64B5F6)
+                        )
+                    } else if (cacheProgress < 1.0f) {
+                        StatItem(
+                            label = "Download Status",
+                            value = "In Progress...",
+                            valueColor = Color(0xFF64B5F6)
+                        )
+                    } else {
+                        StatItem(
+                            label = "Download Status",
+                            value = "✓ Complete",
+                            valueColor = Color.Green
+                        )
+                    }
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     LinearProgressIndicator(
                         progress = { cacheProgress },
                         modifier = Modifier.width(200.dp).height(8.dp),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (failedDownloadCount > 0) Color.Red else MaterialTheme.colorScheme.primary,
                         trackColor = Color.DarkGray
                     )
+                    
+                    // Storage Information
+                    storageStats?.let { stats ->
+                        Spacer(modifier = Modifier.height(24.dp))
+                        
+                        Text(
+                            text = "Device Storage",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        StatItem(
+                            label = "Available",
+                            value = "${stats.availableBytes / 1024 / 1024} MB",
+                            valueColor = when {
+                                stats.availableBytes < 500L * 1024 * 1024 -> Color.Red
+                                stats.availableBytes < 1024L * 1024 * 1024 -> Color(0xFFFF9800)
+                                else -> Color.Green
+                            }
+                        )
+                        
+                        StatItem(
+                            label = "Cache Size",
+                            value = "${stats.cacheBytes / 1024 / 1024} MB"
+                        )
+                        
+                        StatItem(
+                            label = "Storage Used",
+                            value = "${stats.usedPercentage}%",
+                            valueColor = when {
+                                stats.usedPercentage > 90 -> Color.Red
+                                stats.usedPercentage > 80 -> Color(0xFFFF9800)
+                                else -> Color.White
+                            }
+                        )
+                    }
 
                     // Error Section (Conditional)
                     playbackError?.let {

@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 import java.text.SimpleDateFormat
 import java.util.*
@@ -62,19 +63,73 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _remoteCommand = MutableStateFlow<String?>(null)
     val remoteCommand: StateFlow<String?> = _remoteCommand.asStateFlow()
 
+    private val _failedDownloads = MutableStateFlow<Set<String>>(emptySet())
+    val failedDownloads: StateFlow<Set<String>> = _failedDownloads.asStateFlow()
+
+    private val _isRetrying = MutableStateFlow(false)
+    val isRetrying: StateFlow<Boolean> = _isRetrying.asStateFlow()
+
+    private val _storageStats = MutableStateFlow<MediaCacheManager.StorageStats?>(null)
+    val storageStats: StateFlow<MediaCacheManager.StorageStats?> = _storageStats.asStateFlow()
+
+    private val _currentDownloadProgress = MutableStateFlow<MediaCacheManager.DownloadProgress?>(null)
+    val currentDownloadProgress: StateFlow<MediaCacheManager.DownloadProgress?> = _currentDownloadProgress.asStateFlow()
+    
+    data class OverallDownloadStats(
+        val totalItems: Int,
+        val completedItems: Int,
+        val currentlyDownloading: String?,
+        val currentProgress: Int,
+        val totalBytesDownloaded: Long,
+        val totalBytesRequired: Long
+    ) {
+        fun getOverallPercentage(): Int {
+            return if (totalBytesRequired > 0) {
+                ((totalBytesDownloaded * 100) / totalBytesRequired).toInt()
+            } else {
+                (completedItems * 100) / totalItems.coerceAtLeast(1)
+            }
+        }
+        
+        fun getProgressText(): String {
+            val downloadedMB = totalBytesDownloaded / 1024 / 1024
+            val totalMB = totalBytesRequired / 1024 / 1024
+            return "$completedItems/$totalItems items (${getOverallPercentage()}%) - $downloadedMB / $totalMB MB"
+        }
+    }
+    
+    private val _overallDownloadStats = MutableStateFlow<OverallDownloadStats?>(null)
+    val overallDownloadStats: StateFlow<OverallDownloadStats?> = _overallDownloadStats.asStateFlow()
+
     private var currentPlaylistJson: String? = null
     private var lastLicenseExpiry: Date? = null
     private var isCaching = false
     private var cachedItemIds = mutableSetOf<String>()
     private var qrExpiryTime: Date? = null
+    private var cachingJob: Job? = null
 
     init {
+        // Reset caching flag on app start (coroutines don't survive app restart)
+        isCaching = false
+        
         socketManager.connect(onStatusChange = { connected ->
             _isSocketConnected.value = connected
         })
         setupSocketListeners()
+        loadFailedDownloads()
         checkRegistration()
         startPeriodicCheck()
+    }
+    
+    private fun loadFailedDownloads() {
+        viewModelScope.launch {
+            dataStoreManager.failedDownloads.collect { savedFailedIds ->
+                if (savedFailedIds.isNotEmpty()) {
+                    _failedDownloads.value = savedFailedIds
+                    Log.d(TAG, "📥 Restored ${savedFailedIds.size} failed downloads from storage")
+                }
+            }
+        }
     }
 
     private fun setupSocketListeners() {
@@ -188,7 +243,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         Log.d(TAG, "▶️ Starting playback from cache...")
                         val playlist = gson.fromJson(savedPlaylistJson, Playlist::class.java)
                         currentPlaylistJson = savedPlaylistJson
-                        _appState.value = AppState.Playing(playlist, cacheManager.getCacheProgress(playlist.items))
+                        
+                        // Check if caching is incomplete and resume if needed
+                        val cacheProgress = cacheManager.getCacheProgress(playlist.items)
+                        _appState.value = AppState.Playing(playlist, cacheProgress)
+                        
+                        if (cacheProgress < 1.0f) {
+                            Log.d(TAG, "🔄 Incomplete cache detected (${(cacheProgress * 100).toInt()}%). Resuming downloads...")
+                            startCaching(playlist)
+                        }
+                        
                         socketManager.connectPlayer(deviceUid, savedPlaylistId)
                         refreshTimeline(savedPlaylistId)
                     } catch (e: Exception) {
@@ -515,14 +579,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startCaching(playlist: Playlist) {
-        if (isCaching) {
+        // Check if caching job is actually running
+        if (isCaching && cachingJob?.isActive == true) {
             Log.d(TAG, "⏩ Caching already in progress, skipping...")
+            // Update stats even if caching is in progress (for app restart scenario)
+            updateDownloadStatsForInProgress(playlist)
             return
         }
         
-        viewModelScope.launch {
+        // If flag was set but job is not active, reset and continue
+        if (isCaching && cachingJob?.isActive == false) {
+            Log.w(TAG, "⚠️ Caching flag was set but job is not active. Resetting and continuing...")
+            isCaching = false
+            cachingJob = null
+        }
+        
+        cachingJob = viewModelScope.launch {
             isCaching = true
             Log.d(TAG, "🔽 Starting media caching for ${playlist.items.size} items...")
+            
+            // Get initial storage stats
+            _storageStats.value = cacheManager.getStorageStats()
+            Log.d(TAG, "💾 Storage before caching: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
+            
+            // Clear orphaned cache files from previous playlists
+            Log.d(TAG, "🧹 Cleaning orphaned cache files...")
+            cacheManager.clearOrphanedCache(playlist.items)
+            
+            // Update storage stats after cleanup
+            _storageStats.value = cacheManager.getStorageStats()
+            Log.d(TAG, "💾 Storage after cleanup: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
             
             // Update progress immediately
             _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
@@ -531,6 +617,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var successCount = 0
             var failureCount = 0
             var skippedCount = 0
+            var totalBytesDownloaded = 0L
+            val totalBytesRequired = playlist.items.sumOf { it.video?.fileSize ?: 0L }
+            
+            // Calculate already cached items and bytes
+            playlist.items.forEach { item ->
+                if (cacheManager.getLocalFile(item) != null) {
+                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                }
+            }
+            
+            // Initialize overall stats with current state
+            val currentCachedCount = (cacheManager.getCacheProgress(playlist.items) * playlist.items.size).toInt()
+            _overallDownloadStats.value = OverallDownloadStats(
+                totalItems = playlist.items.size,
+                completedItems = currentCachedCount,
+                currentlyDownloading = null,
+                currentProgress = 0,
+                totalBytesDownloaded = totalBytesDownloaded,
+                totalBytesRequired = totalBytesRequired
+            )
+            
+            Log.d(TAG, "📊 Initial stats: $currentCachedCount/${playlist.items.size} cached, ${totalBytesDownloaded / 1024 / 1024}/${totalBytesRequired / 1024 / 1024} MB")
             
             playlist.items.forEachIndexed { index, item ->
                 val fileName = item.video?.fileName ?: "Unknown"
@@ -547,14 +655,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (cacheManager.getLocalFile(item) != null) {
                     cachedItemIds.add(itemId)
                     skippedCount++
+                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
                     Log.d(TAG, "⏭️ File exists (${index + 1}/${playlist.items.size}): $fileName")
+                    
+                    // Update overall stats for already cached items
+                    _overallDownloadStats.value = OverallDownloadStats(
+                        totalItems = playlist.items.size,
+                        completedItems = successCount + skippedCount,
+                        currentlyDownloading = null,
+                        currentProgress = 0,
+                        totalBytesDownloaded = totalBytesDownloaded,
+                        totalBytesRequired = totalBytesRequired
+                    )
+                    
                     return@forEachIndexed
                 }
                 
                 Log.d(TAG, "📥 Caching item ${index + 1}/${playlist.items.size}: $fileName")
                 
+                // Update overall stats - starting download
+                _overallDownloadStats.value = OverallDownloadStats(
+                    totalItems = playlist.items.size,
+                    completedItems = successCount + skippedCount,
+                    currentlyDownloading = fileName,
+                    currentProgress = 0,
+                    totalBytesDownloaded = totalBytesDownloaded,
+                    totalBytesRequired = totalBytesRequired
+                )
+                
                 val success = try {
-                    cacheManager.downloadMedia(item, baseUrl)
+                    cacheManager.downloadMedia(item, baseUrl) { progress ->
+                        // Update current file progress
+                        _currentDownloadProgress.value = progress
+                        
+                        // Update overall stats with current download progress
+                        _overallDownloadStats.value = OverallDownloadStats(
+                            totalItems = playlist.items.size,
+                            completedItems = successCount + skippedCount,
+                            currentlyDownloading = fileName,
+                            currentProgress = progress.percentage,
+                            totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
+                            totalBytesRequired = totalBytesRequired
+                        )
+                    }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Exception caching $fileName", e)
                     false
@@ -563,19 +706,189 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (success) {
                     successCount++
                     cachedItemIds.add(itemId)
+                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                    // Remove from failed list if it was there
+                    _failedDownloads.value = _failedDownloads.value - itemId
+                    // Persist failed downloads
+                    viewModelScope.launch {
+                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
+                    }
                     Log.d(TAG, "✅ Successfully cached: $fileName")
                 } else {
                     failureCount++
-                    Log.e(TAG, "❌ Failed to cache: $fileName")
+                    // Add to failed list
+                    _failedDownloads.value = _failedDownloads.value + itemId
+                    // Persist failed downloads
+                    viewModelScope.launch {
+                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
+                    }
+                    Log.e(TAG, "❌ Failed to cache: $fileName (itemId: $itemId)")
                 }
+                
+                // Clear current download progress
+                _currentDownloadProgress.value = null
                 
                 // Update progress after each item
                 _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
                 _appState.value = AppState.Playing(playlist, _cacheProgress.value)
+                
+                // Update overall stats after item completes
+                _overallDownloadStats.value = OverallDownloadStats(
+                    totalItems = playlist.items.size,
+                    completedItems = successCount + skippedCount,
+                    currentlyDownloading = null,
+                    currentProgress = 0,
+                    totalBytesDownloaded = totalBytesDownloaded,
+                    totalBytesRequired = totalBytesRequired
+                )
             }
             
             isCaching = false
+            cachingJob = null
+            
+            // Update final storage stats
+            _storageStats.value = cacheManager.getStorageStats()
+            
             Log.d(TAG, "🏁 Caching complete: $successCount downloaded, $skippedCount already cached, $failureCount failed")
+            Log.d(TAG, "💾 Final storage: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
+            Log.d(TAG, "📦 Cache size: ${_storageStats.value?.cacheBytes?.div(1024)?.div(1024)} MB")
+            
+            if (failureCount > 0) {
+                Log.w(TAG, "⚠️ Some downloads failed. Failed items: ${_failedDownloads.value}")
+            }
+            
+            // Keep final stats for 5 seconds before clearing (so UI can display completion)
+            delay(5000)
+            _currentDownloadProgress.value = null
+            _overallDownloadStats.value = null
+        }
+    }
+
+    fun retryFailedDownloads() {
+        viewModelScope.launch {
+            val currentState = _appState.value
+            if (currentState !is AppState.Playing) {
+                Log.w(TAG, "⚠️ Cannot retry downloads - not in Playing state")
+                return@launch
+            }
+
+            val failedItemIds = _failedDownloads.value
+            if (failedItemIds.isEmpty()) {
+                Log.d(TAG, "ℹ️ No failed downloads to retry")
+                return@launch
+            }
+
+            if (_isRetrying.value) {
+                Log.w(TAG, "⚠️ Retry already in progress")
+                return@launch
+            }
+
+            _isRetrying.value = true
+            Log.d(TAG, "🔄 Starting retry for ${failedItemIds.size} failed downloads...")
+
+            val playlist = currentState.playlist
+            val failedItems = playlist.items.filter { failedItemIds.contains(it.id) }
+            val totalBytesRequired = failedItems.sumOf { it.video?.fileSize ?: 0L }
+
+            var retrySuccessCount = 0
+            var retryFailCount = 0
+            var totalBytesDownloaded = 0L
+            
+            // Initialize overall stats for retry
+            _overallDownloadStats.value = OverallDownloadStats(
+                totalItems = failedItems.size,
+                completedItems = 0,
+                currentlyDownloading = null,
+                currentProgress = 0,
+                totalBytesDownloaded = 0L,
+                totalBytesRequired = totalBytesRequired
+            )
+
+            failedItems.forEachIndexed { index, item ->
+                val fileName = item.video?.fileName ?: "Unknown"
+                Log.d(TAG, "🔄 Retrying (${index + 1}/${failedItems.size}): $fileName")
+
+                // Update overall stats - starting retry
+                _overallDownloadStats.value = OverallDownloadStats(
+                    totalItems = failedItems.size,
+                    completedItems = retrySuccessCount,
+                    currentlyDownloading = fileName,
+                    currentProgress = 0,
+                    totalBytesDownloaded = totalBytesDownloaded,
+                    totalBytesRequired = totalBytesRequired
+                )
+
+                val success = try {
+                    cacheManager.downloadMedia(item, baseUrl) { progress ->
+                        // Update current file progress
+                        _currentDownloadProgress.value = progress
+                        
+                        // Update overall stats with current download progress
+                        _overallDownloadStats.value = OverallDownloadStats(
+                            totalItems = failedItems.size,
+                            completedItems = retrySuccessCount,
+                            currentlyDownloading = fileName,
+                            currentProgress = progress.percentage,
+                            totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
+                            totalBytesRequired = totalBytesRequired
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Exception during retry for $fileName", e)
+                    false
+                }
+
+                if (success) {
+                    retrySuccessCount++
+                    cachedItemIds.add(item.id)
+                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                    _failedDownloads.value = _failedDownloads.value - item.id
+                    // Persist failed downloads
+                    viewModelScope.launch {
+                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
+                    }
+                    Log.d(TAG, "✅ Retry successful: $fileName")
+                } else {
+                    retryFailCount++
+                    Log.e(TAG, "❌ Retry failed: $fileName")
+                }
+
+                // Clear current download progress
+                _currentDownloadProgress.value = null
+
+                // Update progress after each retry
+                _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
+                _appState.value = AppState.Playing(playlist, _cacheProgress.value)
+                
+                // Update overall stats after retry completes
+                _overallDownloadStats.value = OverallDownloadStats(
+                    totalItems = failedItems.size,
+                    completedItems = retrySuccessCount,
+                    currentlyDownloading = null,
+                    currentProgress = 0,
+                    totalBytesDownloaded = totalBytesDownloaded,
+                    totalBytesRequired = totalBytesRequired
+                )
+            }
+
+            _isRetrying.value = false
+            
+            // Update storage stats after retry
+            _storageStats.value = cacheManager.getStorageStats()
+            
+            Log.d(TAG, "🏁 Retry complete: $retrySuccessCount succeeded, $retryFailCount still failed")
+            Log.d(TAG, "💾 Storage after retry: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
+            
+            // Keep final stats for 5 seconds before clearing
+            delay(5000)
+            _currentDownloadProgress.value = null
+            _overallDownloadStats.value = null
+            
+            if (retryFailCount > 0) {
+                Log.w(TAG, "⚠️ Still have ${_failedDownloads.value.size} failed downloads")
+            } else {
+                Log.d(TAG, "🎉 All downloads successful!")
+            }
         }
     }
 
@@ -601,6 +914,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Clear caching state
             isCaching = false
             cachedItemIds.clear()
+            _failedDownloads.value = emptySet()
+            _isRetrying.value = false
+            
+            // Clear persisted failed downloads
+            dataStoreManager.saveFailedDownloads(emptySet())
             
             dataStoreManager.savePlaylistCode("")
             dataStoreManager.savePlaylistId("")
@@ -613,6 +931,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             delay(100)
             
             initQrRegistration()
+        }
+    }
+    
+    /**
+     * Update download stats for in-progress downloads (e.g., after app restart)
+     */
+    private fun updateDownloadStatsForInProgress(playlist: Playlist) {
+        viewModelScope.launch {
+            val totalBytesRequired = playlist.items.sumOf { it.video?.fileSize ?: 0L }
+            var totalBytesDownloaded = 0L
+            
+            // Calculate already cached bytes
+            playlist.items.forEach { item ->
+                if (cacheManager.getLocalFile(item) != null) {
+                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                }
+            }
+            
+            val currentCachedCount = (cacheManager.getCacheProgress(playlist.items) * playlist.items.size).toInt()
+            
+            // Update overall stats to show current progress
+            _overallDownloadStats.value = OverallDownloadStats(
+                totalItems = playlist.items.size,
+                completedItems = currentCachedCount,
+                currentlyDownloading = "Downloading in background...",
+                currentProgress = 0,
+                totalBytesDownloaded = totalBytesDownloaded,
+                totalBytesRequired = totalBytesRequired
+            )
+            
+            Log.d(TAG, "📊 Updated stats for in-progress: $currentCachedCount/${playlist.items.size} cached, ${totalBytesDownloaded / 1024 / 1024}/${totalBytesRequired / 1024 / 1024} MB")
         }
     }
 }

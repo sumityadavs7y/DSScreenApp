@@ -18,6 +18,7 @@ class DataStoreManager(private val context: Context) {
         val DEVICE_UID = stringPreferencesKey("device_uid")
         val SAVED_PLAYLIST = stringPreferencesKey("saved_playlist")
         val LICENSE_EXPIRY = stringPreferencesKey("license_expiry")
+        val FAILED_DOWNLOADS = stringPreferencesKey("failed_downloads")
         val SCREEN_ROTATION = stringPreferencesKey("screen_rotation")
         val DISPLAY_MODE = stringPreferencesKey("display_mode")
     }
@@ -76,6 +77,18 @@ class DataStoreManager(private val context: Context) {
             preferences[LICENSE_EXPIRY] = expiry
         }
     }
+    
+    suspend fun saveFailedDownloads(failedIds: Set<String>) {
+        context.dataStore.edit { preferences ->
+            preferences[FAILED_DOWNLOADS] = failedIds.joinToString(",")
+        }
+    }
+    
+    val failedDownloads: Flow<Set<String>> = context.dataStore.data
+        .map { preferences ->
+            val idsString = preferences[FAILED_DOWNLOADS] ?: ""
+            if (idsString.isEmpty()) emptySet() else idsString.split(",").toSet()
+        }
 
     val screenRotation: Flow<String?> = context.dataStore.data
         .map { preferences ->
