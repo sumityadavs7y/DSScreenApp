@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.focusable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -15,6 +16,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.*
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
@@ -189,12 +194,42 @@ fun StatsScreen(
             ) {
                 
                 // Left Column: General Device Info (Scrollable)
+                val leftColumnScrollState = rememberScrollState()
+                val leftColumnScope = rememberCoroutineScope()
+                val scrollAmount = 100f // pixels to scroll per D-pad press
+                
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(leftColumnScrollState)
                         .padding(end = 16.dp)
+                        .onPreviewKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown) {
+                                when (keyEvent.key) {
+                                    Key.DirectionDown, Key.NavigateNext -> {
+                                        leftColumnScope.launch {
+                                            leftColumnScrollState.animateScrollTo(
+                                                (leftColumnScrollState.value + scrollAmount).toInt()
+                                            )
+                                        }
+                                        true
+                                    }
+                                    Key.DirectionUp, Key.NavigatePrevious -> {
+                                        leftColumnScope.launch {
+                                            leftColumnScrollState.animateScrollTo(
+                                                (leftColumnScrollState.value - scrollAmount).toInt()
+                                            )
+                                        }
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        .focusable()
                 ) {
                     StatItem(
                         label = "Remote Management",
@@ -378,6 +413,9 @@ fun StatsScreen(
                 }
 
                 // Right Column: Detailed Playlist Item List
+                val rightColumnScrollState = rememberScrollState()
+                val rightColumnScope = rememberCoroutineScope()
+                
                 Column(modifier = Modifier.weight(2f)) {
                     Text(
                         text = "Playlist Items",
@@ -393,11 +431,39 @@ fun StatsScreen(
                         ),
                         shape = MaterialTheme.shapes.medium
                     ) {
-                        LazyColumn(
-                            modifier = Modifier.padding(16.dp),
-                            contentPadding = PaddingValues(bottom = 16.dp)
+                        Column(
+                            modifier = Modifier
+                                .padding(16.dp)
+                                .fillMaxSize()
+                                .verticalScroll(rightColumnScrollState)
+                                .onPreviewKeyEvent { keyEvent ->
+                                    if (keyEvent.type == KeyEventType.KeyDown) {
+                                        when (keyEvent.key) {
+                                            Key.DirectionDown, Key.NavigateNext -> {
+                                                rightColumnScope.launch {
+                                                    rightColumnScrollState.animateScrollTo(
+                                                        (rightColumnScrollState.value + scrollAmount).toInt()
+                                                    )
+                                                }
+                                                true
+                                            }
+                                            Key.DirectionUp, Key.NavigatePrevious -> {
+                                                rightColumnScope.launch {
+                                                    rightColumnScrollState.animateScrollTo(
+                                                        (rightColumnScrollState.value - scrollAmount).toInt()
+                                                    )
+                                                }
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                }
+                                .focusable()
                         ) {
-                            items(playlist.items) { item ->
+                            playlist.items.forEach { item ->
                                 PlaylistItemRow(item)
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
