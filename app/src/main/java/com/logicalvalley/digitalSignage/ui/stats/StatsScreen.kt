@@ -3,8 +3,6 @@ package com.logicalvalley.digitalSignage.ui.stats
 import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.focusable
@@ -35,7 +33,6 @@ import java.util.concurrent.TimeUnit
 import androidx.compose.ui.res.painterResource
 import com.logicalvalley.digitalSignage.R
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
-import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
 
 /**
  * Robust UI for displaying device and playlist statistics.
@@ -51,8 +48,6 @@ fun StatsScreen(
     failedDownloadCount: Int,
     isRetrying: Boolean,
     storageStats: MediaCacheManager.StorageStats?,
-    currentDownloadProgress: MediaCacheManager.DownloadProgress?,
-    overallDownloadStats: MainViewModel.OverallDownloadStats?,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -237,112 +232,14 @@ fun StatsScreen(
                         valueColor = if (isSocketConnected) Color.Green else Color.Red
                     )
                     StatItem(label = "Total Items", value = "${playlist.items.size}")
-                    
-                    // Calculate cached items and sizes
-                    val cachedCount = (cacheProgress * playlist.items.size).toInt()
-                    val totalSize = playlist.items.sumOf { it.video?.fileSize ?: 0L }
-                    val totalSizeMB = totalSize / 1024 / 1024
-                    
-                    // Show detailed download progress or completion status
-                    overallDownloadStats?.let { stats ->
-                        // ACTIVE DOWNLOAD - Show real-time progress
-                        StatItem(
-                            label = "Download Progress",
-                            value = stats.getProgressText(),
-                            valueColor = Color(0xFF64B5F6)
-                        )
-                        
-                        // Currently downloading file
-                        stats.currentlyDownloading?.let { fileName ->
-                            currentDownloadProgress?.let { fileProgress ->
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                    Text(
-                                        text = "Currently downloading:",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = Color.Gray
-                                    )
-                                    Text(
-                                        text = fileName,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = Color.White,
-                                        maxLines = 1
-                                    )
-                                    Text(
-                                        text = fileProgress.getProgressText(),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF64B5F6)
-                                    )
-                                }
-                            }
+                    StatItem(
+                        label = "Offline Ready", 
+                        value = "${(cacheProgress * 100).toInt()}%",
+                        valueColor = when {
+                            cacheProgress >= 1.0f -> Color.Green
+                            cacheProgress > 0.5f -> Color(0xFF64B5F6)
+                            else -> Color(0xFFFF9800)
                         }
-                    } ?: run {
-                        // NOT ACTIVELY DOWNLOADING - Show enhanced summary
-                        StatItem(
-                            label = "Cached Items",
-                            value = "$cachedCount / ${playlist.items.size}"
-                        )
-                        
-                        StatItem(
-                            label = "Cache Progress",
-                            value = "${(cacheProgress * 100).toInt()}%",
-                            valueColor = when {
-                                cacheProgress >= 1.0f -> Color.Green
-                                cacheProgress > 0.5f -> Color(0xFF64B5F6)
-                                else -> Color(0xFFFF9800)
-                            }
-                        )
-                        
-                        // Show total size information
-                        if (totalSizeMB > 0) {
-                            val cachedSizeMB = (totalSizeMB * cacheProgress).toLong()
-                            StatItem(
-                                label = "Cached Data",
-                                value = "$cachedSizeMB / $totalSizeMB MB"
-                            )
-                        }
-                    }
-                    
-                    // Show download status
-                    if (isRetrying) {
-                        StatItem(
-                            label = "Download Status",
-                            value = "Retrying ($failedDownloadCount items)...",
-                            valueColor = Color(0xFFFF9800)
-                        )
-                    } else if (failedDownloadCount > 0) {
-                        StatItem(
-                            label = "Download Status",
-                            value = "$failedDownloadCount failed",
-                            valueColor = Color.Red
-                        )
-                    } else if (overallDownloadStats != null) {
-                        StatItem(
-                            label = "Download Status",
-                            value = "In Progress...",
-                            valueColor = Color(0xFF64B5F6)
-                        )
-                    } else if (cacheProgress < 1.0f) {
-                        StatItem(
-                            label = "Download Status",
-                            value = "In Progress...",
-                            valueColor = Color(0xFF64B5F6)
-                        )
-                    } else {
-                        StatItem(
-                            label = "Download Status",
-                            value = "✓ Complete",
-                            valueColor = Color.Green
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    LinearProgressIndicator(
-                        progress = { cacheProgress },
-                        modifier = Modifier.width(200.dp).height(8.dp),
-                        color = if (failedDownloadCount > 0) Color.Red else MaterialTheme.colorScheme.primary,
-                        trackColor = Color.DarkGray
                     )
                     
                     // Storage Information

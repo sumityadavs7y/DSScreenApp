@@ -384,3 +384,4 @@ The UI now **always shows detailed byte-level information**, not just during act
 **Last Updated:** February 8, 2026  
 **Issue Status:** Resolved ✅
 
+
