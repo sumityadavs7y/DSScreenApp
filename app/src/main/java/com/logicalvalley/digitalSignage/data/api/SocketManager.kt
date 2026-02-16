@@ -14,6 +14,10 @@ class SocketManager {
     private val TAG = "SocketManager"
     private var socket: Socket? = null
     private val gson = Gson()
+    
+    // State tracking for reconnection
+    private var lastDeviceId: String? = null
+    private var lastPlaylistId: String? = null
 
     // Create OkHttpClient with SSL configuration
     private val okHttpClient = SSLConfig.createOkHttpClient()
@@ -23,6 +27,10 @@ class SocketManager {
         onStatusChange: ((Boolean) -> Unit)? = null
     ) {
         if (socket?.connected() == true) return
+        
+        // Clean up any existing socket instance to prevent leaks
+        socket?.disconnect()
+        socket?.off()
 
         try {
             val opts = IO.Options().apply {
@@ -37,6 +45,24 @@ class SocketManager {
             socket?.on(Socket.EVENT_CONNECT) {
                 Log.d(TAG, "🔌 Socket Connected!")
                 onStatusChange?.invoke(true)
+                
+                // Re-establish session state on reconnection
+                val deviceId = lastDeviceId
+                val playlistId = lastPlaylistId
+                
+                if (deviceId != null) {
+                    if (playlistId != null) {
+                        Log.d(TAG, "🔄 Auto-reconnecting player session: $deviceId")
+                        val data = JSONObject().apply {
+                            put("uid", deviceId)
+                            put("playlistId", playlistId)
+                        }
+                        socket?.emit("device:player:connect", data)
+                    } else {
+                        Log.d(TAG, "🔄 Auto-rejoining device room: $deviceId")
+                        socket?.emit("device:join", deviceId)
+                    }
+                }
             }
             
             socket?.on(Socket.EVENT_DISCONNECT) {
@@ -95,11 +121,15 @@ class SocketManager {
     }
 
     fun joinDeviceRoom(deviceId: String) {
+        lastDeviceId = deviceId
+        lastPlaylistId = null // We are in registration mode
         Log.d(TAG, "🏠 Joining device room: $deviceId")
         socket?.emit("device:join", deviceId)
     }
 
     fun connectPlayer(uid: String, playlistId: String) {
+        lastDeviceId = uid
+        lastPlaylistId = playlistId
         Log.d(TAG, "🎮 Connecting player: $uid to playlist: $playlistId")
         val data = JSONObject().apply {
             put("uid", uid)
