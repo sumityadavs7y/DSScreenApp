@@ -8,6 +8,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.focusable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,13 +32,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 
-import androidx.compose.ui.res.painterResource
-import com.logicalvalley.digitalSignage.R
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
-import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.border
 
 /**
  * Robust UI for displaying device and playlist statistics.
@@ -52,7 +48,8 @@ fun StatsScreen(
     failedDownloadCount: Int,
     isRetrying: Boolean,
     storageStats: MediaCacheManager.StorageStats?,
-    videoProgressList: List<MainViewModel.VideoDownloadProgress>,
+    mediaCacheManager: MediaCacheManager,
+    videoProgressList: List<com.logicalvalley.digitalSignage.viewmodel.MainViewModel.VideoDownloadProgress>,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -138,22 +135,6 @@ fun StatsScreen(
                     }
                     Spacer(modifier = Modifier.width(16.dp))
                     
-                    // Show retry button only when there are failed downloads AND retry is not in progress
-                    if (failedDownloadCount > 0 && !isRetrying) {
-                        Button(
-                            onClick = onRetryDownloads,
-                            colors = ButtonDefaults.colors(
-                                containerColor = Color(0xFFFF9800),
-                                focusedContainerColor = Color(0xFFFFA726)
-                            )
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("🔄 Retry Downloads ($failedDownloadCount)")
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
-                    }
-                    
                     Button(
                         onClick = onOpenSettings,
                         colors = ButtonDefaults.colors(
@@ -237,30 +218,44 @@ fun StatsScreen(
                         valueColor = if (isSocketConnected) Color.Green else Color.Red
                     )
                     StatItem(label = "Total Items", value = "${playlist.items.size}")
+                    
+                    // Playback Mode Section
+                    Spacer(modifier = Modifier.height(24.dp))
+                    
+                    Text(
+                        text = "Playback Mode",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    val isFullyCached = cacheProgress >= 1.0f
+                    val isPartiallyCached = cacheProgress > 0f && !isFullyCached
+                    
                     StatItem(
-                        label = "Offline Ready", 
-                        value = "${(cacheProgress * 100).toInt()}%",
+                        label = "Mode",
+                        value = when {
+                            isFullyCached -> "Offline Mode"
+                            isPartiallyCached -> "Hybrid Mode"
+                            else -> "Streaming Mode"
+                        },
                         valueColor = when {
-                            cacheProgress >= 1.0f -> Color.Green
-                            cacheProgress > 0.5f -> Color(0xFF64B5F6)
-                            else -> Color(0xFFFF9800)
+                            isFullyCached -> Color.Green
+                            isPartiallyCached -> Color(0xFFFFB300)
+                            else -> Color(0xFF2196F3)
                         }
                     )
                     
-                    // Segmented Download Progress Bar
-                    if (videoProgressList.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Download Progress",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SegmentedProgressBar(
-                            videoProgressList = videoProgressList,
-                            modifier = Modifier.width(300.dp).height(24.dp)
-                        )
-                    }
+                    Text(
+                        text = when {
+                            isFullyCached -> "All media is playing from local storage"
+                            isPartiallyCached -> "Playing available files from storage, others streamed"
+                            else -> "All media is streamed directly from the server"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
                     
                     // Storage Information
                     storageStats?.let { stats ->
@@ -288,12 +283,13 @@ fun StatsScreen(
                             value = "${stats.cacheBytes / 1024 / 1024} MB"
                         )
                         
+                        val usedPercentage = ((stats.totalBytes - stats.availableBytes) * 100 / stats.totalBytes).toInt()
                         StatItem(
                             label = "Storage Used",
-                            value = "${stats.usedPercentage}%",
+                            value = "$usedPercentage%",
                             valueColor = when {
-                                stats.usedPercentage > 90 -> Color.Red
-                                stats.usedPercentage > 80 -> Color(0xFFFF9800)
+                                usedPercentage > 90 -> Color.Red
+                                usedPercentage > 80 -> Color(0xFFFF9800)
                                 else -> Color.White
                             }
                         )
@@ -381,7 +377,8 @@ fun StatsScreen(
                                 .focusable()
                         ) {
                             playlist.items.forEach { item ->
-                                PlaylistItemRow(item)
+                                val itemProgress = videoProgressList.find { it.itemId == item.id }
+                                PlaylistItemRow(item, mediaCacheManager, cacheProgress, itemProgress)
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
                         }
@@ -401,98 +398,222 @@ private fun StatItem(label: String, value: String, valueColor: Color = Color.Whi
 }
 
 @Composable
-private fun PlaylistItemRow(item: PlaylistItem) {
+private fun PlaylistItemRowStreaming(item: PlaylistItem) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = Color(0xFF1565C0).copy(alpha = 0.1f),
+                shape = MaterialTheme.shapes.small
+            )
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        val type = if (item.video?.mimeType?.startsWith("video") == true) "Video" else "Image"
-        Text(
-            text = "${item.order + 1}. ${item.video?.fileName ?: "Unknown"}",
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.White,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = "$type | ${item.duration}s",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.Gray
-        )
-    }
-}
-
-
-/**
- * Segmented Progress Bar - shows download progress per video
- * Each segment width is proportional to video file size
- * Segments fill from left to right like traditional progress bars
- * Colors: Grey (empty) -> Orange (filling) -> Green (complete)
- */
-@Composable
-private fun SegmentedProgressBar(
-    videoProgressList: List<MainViewModel.VideoDownloadProgress>,
-    modifier: Modifier = Modifier
-) {
-    val totalSize = videoProgressList.sumOf { it.fileSize }.toFloat()
-    
-    if (totalSize <= 0f) {
-        // Fallback if no size data
-        Box(
-            modifier = modifier
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color.DarkGray)
-        )
-        return
-    }
-    
-    Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .border(1.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
-    ) {
-        videoProgressList.forEachIndexed { index, video ->
-            // Each segment with traditional left-to-right fill
-            val widthFraction = (video.fileSize.toFloat() / totalSize)
-            val progress = video.getProgress()
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Streaming indicator
+            Icon(
+                imageVector = Icons.Default.CloudDownload,
+                contentDescription = "Streaming",
+                tint = Color(0xFF2196F3),
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
             
-            // Background color (empty/unfilled portion)
-            val backgroundColor = Color(0xFF424242)  // Grey
-            
-            // Foreground color (filled portion) based on progress
-            val foregroundColor = when {
-                progress >= 1.0f -> Color(0xFF4CAF50)  // Green - complete
-                progress > 0f -> Color(0xFFFF9800)      // Orange - in progress
-                else -> backgroundColor                  // Same as background when not started
-            }
-            
-            Box(
-                modifier = Modifier
-                    .weight(widthFraction)
-                    .fillMaxHeight()
-                    .background(backgroundColor)
-            ) {
-                // Filled portion - grows from left to right
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress)
-                        .fillMaxHeight()
-                        .background(foregroundColor)
+            Column {
+                Text(
+                    text = "${item.order + 1}. ${item.video?.fileName ?: "Unknown"}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.White
+                )
+                Text(
+                    text = "📡 Streaming from server",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF2196F3)
                 )
             }
-            
-            // Add vertical divider between segments (not after last one)
-            if (index < videoProgressList.size - 1) {
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(Color.Black.copy(alpha = 0.6f))
+        }
+        
+        Column(horizontalAlignment = Alignment.End) {
+            val type = if (item.video?.mimeType?.startsWith("video") == true) "Video" else "Image"
+            Text(
+                text = "$type | ${item.duration}s",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.Gray
+            )
+            item.video?.fileSize?.let { size ->
+                Text(
+                    text = "${size / 1024 / 1024} MB",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.LightGray
                 )
             }
         }
     }
 }
 
+@Composable
+private fun PlaylistItemRow(
+    item: PlaylistItem, 
+    mediaCacheManager: MediaCacheManager, 
+    cacheProgress: Float,
+    itemProgress: com.logicalvalley.digitalSignage.viewmodel.MainViewModel.VideoDownloadProgress?
+) {
+    // Recheck cache status whenever cacheProgress or itemProgress changes
+    // This now validates file exists, is > 1KB, and is readable
+    val localFile = remember(cacheProgress, itemProgress?.downloadedBytes, item.id) {
+        mediaCacheManager.getLocalFile(item)
+    }
+    val isCached = localFile != null
+    
+    // Calculate download progress
+    val downloadProgress = remember(itemProgress?.downloadedBytes, itemProgress?.fileSize) {
+        itemProgress?.getProgress() ?: 0f
+    }
+    
+    // Determine state: downloading (0-100%), validating (100% but not cached), or cached/not cached
+    val isDownloading = !isCached && downloadProgress > 0f && downloadProgress < 1f
+    val isValidating = !isCached && downloadProgress >= 1f
+    
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                color = when {
+                    isCached -> Color(0xFF1B5E20).copy(alpha = 0.2f)
+                    isValidating -> Color(0xFF4CAF50).copy(alpha = 0.15f)
+                    isDownloading -> Color(0xFF1565C0).copy(alpha = 0.2f)
+                    else -> Color.Transparent
+                },
+                shape = MaterialTheme.shapes.small
+            )
+            .padding(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Cache status indicator
+                Icon(
+                    imageVector = when {
+                        isCached -> Icons.Default.CheckCircle
+                        isValidating -> Icons.Default.CheckCircle
+                        isDownloading -> Icons.Default.CloudDownload
+                        else -> Icons.Default.CloudDownload
+                    },
+                    contentDescription = when {
+                        isCached -> "Cached and validated"
+                        isValidating -> "Validating"
+                        isDownloading -> "Downloading"
+                        else -> "Not cached"
+                    },
+                    tint = when {
+                        isCached -> Color.Green
+                        isValidating -> Color(0xFFFFB300)
+                        isDownloading -> Color(0xFF2196F3)
+                        else -> Color.Gray
+                    },
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                
+                Column {
+                    Text(
+                        text = "${item.order + 1}. ${item.video?.fileName ?: "Unknown"}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.White
+                    )
+                    Text(
+                        text = when {
+                            isCached -> "✓ Available offline (validated)"
+                            isValidating -> "⏳ Validating file..."
+                            isDownloading -> "⬇ Downloading... ${String.format("%.2f", downloadProgress * 100)}%"
+                            else -> "⚠ Needs download"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = when {
+                            isCached -> Color.Green
+                            isValidating -> Color(0xFFFFB300)
+                            isDownloading -> Color(0xFF2196F3)
+                            else -> Color(0xFFFF9800)
+                        }
+                    )
+                }
+            }
+            
+            Column(horizontalAlignment = Alignment.End) {
+                val type = if (item.video?.mimeType?.startsWith("video") == true) "Video" else "Image"
+                Text(
+                    text = "$type | ${item.duration}s",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Gray
+                )
+                item.video?.fileSize?.let { size ->
+                    when {
+                        isDownloading -> {
+                            val downloadedMB = (itemProgress?.downloadedBytes ?: 0L).toDouble() / 1024 / 1024
+                            val totalMB = size.toDouble() / 1024 / 1024
+                            Text(
+                                text = "${String.format("%.2f", downloadedMB)} / ${String.format("%.2f", totalMB)} MB",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF2196F3)
+                            )
+                        }
+                        isValidating -> {
+                            val fileMB = size.toDouble() / 1024 / 1024
+                            Text(
+                                text = "${String.format("%.2f", fileMB)} MB",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFFFB300)
+                            )
+                        }
+                        else -> {
+                            val fileMB = size.toDouble() / 1024 / 1024
+                            Text(
+                                text = "${String.format("%.2f", fileMB)} MB",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.LightGray
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Show progress bar for downloading and validating files
+        when {
+            isDownloading -> {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = downloadProgress,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = Color(0xFF2196F3),
+                    trackColor = Color.DarkGray
+                )
+            }
+            isValidating -> {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = Color(0xFFFFB300),
+                    trackColor = Color.DarkGray
+                )
+            }
+        }
+    }
+}
 /**
  * Pure logic helper to handle data processing for the Stats Screen.
  */

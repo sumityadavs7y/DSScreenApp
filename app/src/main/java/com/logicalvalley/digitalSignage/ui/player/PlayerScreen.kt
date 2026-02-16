@@ -47,6 +47,7 @@ fun PlayerScreen(
     val currentItem = playlist.items.getOrNull(currentIndex)
 
     if (currentItem != null) {
+        // Use cached file if available
         val localFile = cacheManager.getLocalFile(currentItem)
         val isVideo = currentItem.video?.mimeType?.startsWith("video") == true
         val playKey = "${currentItem.id}_$playCounter"
@@ -209,8 +210,25 @@ fun VideoPlayer(
         val mediaItem = if (localFile != null && localFile.exists()) {
             Log.d("VideoPlayer", "📦 Using cached file: ${localFile.name}")
             Log.d("VideoPlayer", "📂 File path: ${localFile.absolutePath}")
-            MediaItem.fromUri(android.net.Uri.fromFile(localFile))
+            Log.d("VideoPlayer", "📊 File size: ${localFile.length() / 1024}KB")
+            Log.d("VideoPlayer", "🔓 Can read: ${localFile.canRead()}")
+            
+            // Verify file is valid before creating MediaItem
+            if (!localFile.canRead()) {
+                Log.e("VideoPlayer", "❌ Cannot read file, falling back to streaming")
+                MediaItem.fromUri(videoUrl)
+            } else if (localFile.length() < 1024) {
+                Log.e("VideoPlayer", "❌ File too small (${localFile.length()} bytes), falling back to streaming")
+                MediaItem.fromUri(videoUrl)
+            } else {
+                val fileUri = android.net.Uri.fromFile(localFile)
+                Log.d("VideoPlayer", "🎬 File URI: $fileUri")
+                MediaItem.fromUri(fileUri)
+            }
         } else {
+            if (localFile != null) {
+                Log.w("VideoPlayer", "⚠️ Local file doesn't exist: ${localFile.absolutePath}")
+            }
             Log.d("VideoPlayer", "🌐 Streaming from URL: $videoUrl")
             MediaItem.fromUri(videoUrl)
         }

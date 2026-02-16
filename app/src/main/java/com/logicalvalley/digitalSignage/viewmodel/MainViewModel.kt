@@ -31,6 +31,14 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import java.io.File
+
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.workDataOf
+import androidx.work.ExistingWorkPolicy
+import com.logicalvalley.digitalSignage.worker.DownloadWorker
+import androidx.work.WorkManager
 
 sealed class AppState {
     object Loading : AppState()
@@ -49,6 +57,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val deviceUid = Settings.Secure.getString(application.contentResolver, Settings.Secure.ANDROID_ID)
     private val baseUrl = AppConfig.BASE_URL
     private val gson = Gson()
+    private val workManager = WorkManager.getInstance(application)
 
     private val _appState = MutableStateFlow<AppState>(AppState.Loading)
     val appState: StateFlow<AppState> = _appState.asStateFlow()
@@ -108,11 +117,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val itemId: String,
         val fileName: String,
         val fileSize: Long,
-        val downloadedBytes: Long
+        val downloadedBytes: Long,
+        val actualTotalBytes: Long = fileSize  // Actual size reported by network
     ) {
         fun getProgress(): Float {
-            return if (fileSize > 0) {
-                (downloadedBytes.toFloat() / fileSize.toFloat()).coerceIn(0f, 1f)
+            val total = if (actualTotalBytes > 0) actualTotalBytes else fileSize
+            return if (total > 0) {
+                (downloadedBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f)
             } else 0f
         }
     }
@@ -535,14 +546,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val newPlaylist = currentPlaylist.copy(items = response.items)
                         val newPlaylistJson = gson.toJson(newPlaylist)
                         
-                        // Initialize video progress list for new playlist
-                        initializeVideoProgressList(newPlaylist)
-                        
                         // 2. Update state if needed (always update if Loading)
                         if (newPlaylistJson != currentPlaylistJson || _appState.value is AppState.Loading) {
                             Log.d(TAG, "🆕 Updating items and transitioning to Playing state")
                             currentPlaylistJson = newPlaylistJson
                             dataStoreManager.savePlaylist(newPlaylistJson)
+                            
+                            // Initialize video progress list ONLY when playlist changes
+                            initializeVideoProgressList(newPlaylist)
+                            
                             startCaching(newPlaylist)
                         } else {
                             Log.d(TAG, "😴 Timeline unchanged.")
@@ -662,365 +674,187 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startCaching(playlist: Playlist) {
-        // Check if caching job is actually running
-        if (isCaching && cachingJob?.isActive == true) {
-            Log.d(TAG, "⏩ Caching already in progress, skipping...")
-            // Update stats even if caching is in progress (for app restart scenario)
-            updateDownloadStatsForInProgress(playlist)
-            return
-        }
+        Log.d(TAG, "🚀 Starting background downloads via WorkManager")
+        currentPlaylist = playlist
         
-        // If flag was set but job is not active, reset and continue
-        if (isCaching && cachingJob?.isActive == false) {
-            Log.w(TAG, "⚠️ Caching flag was set but job is not active. Resetting and continuing...")
-            isCaching = false
-            cachingJob = null
-        }
+        // Initialize progress list
+        initializeVideoProgressList(playlist)
         
-        cachingJob = viewModelScope.launch {
-            isCaching = true
-            currentPlaylist = playlist  // Store for auto-resume
-            Log.d(TAG, "🔽 Starting media caching for ${playlist.items.size} items...")
+        // Calculate initial cache progress
+        _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
+        _appState.value = AppState.Playing(playlist, _cacheProgress.value)
+
+        playlist.items.forEach { item ->
+            val videoId = item.video?.id ?: return@forEach
+            val fileName = item.video?.fileName ?: "Unknown"
+            val fileSize = item.video?.fileSize ?: 0L
             
-            // Get initial storage stats
-            _storageStats.value = cacheManager.getStorageStats()
-            Log.d(TAG, "💾 Storage before caching: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
-            
-            // Clear orphaned cache files from previous playlists
-            Log.d(TAG, "🧹 Cleaning orphaned cache files...")
-            cacheManager.clearOrphanedCache(playlist.items)
-            
-            // Update storage stats after cleanup
-            _storageStats.value = cacheManager.getStorageStats()
-            Log.d(TAG, "💾 Storage after cleanup: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
-            
-            // Update progress immediately
-            _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
-            _appState.value = AppState.Playing(playlist, _cacheProgress.value)
-            
-            var successCount = 0
-            var failureCount = 0
-            var skippedCount = 0
-            var totalBytesDownloaded = 0L
-            val totalBytesRequired = playlist.items.sumOf { it.video?.fileSize ?: 0L }
-            
-            // Initialize video progress list with all items
-            val initialProgressList = playlist.items.map { item ->
-                val fileSize = item.video?.fileSize ?: 0L
-                val downloadedBytes = if (cacheManager.getLocalFile(item) != null) fileSize else 0L
-                if (downloadedBytes > 0) {
-                    totalBytesDownloaded += downloadedBytes
-                }
-                VideoDownloadProgress(
-                    itemId = item.id,
-                    fileName = item.video?.fileName ?: "Unknown",
-                    fileSize = fileSize,
-                    downloadedBytes = downloadedBytes
-                )
+            // Check if already cached
+            if (cacheManager.getLocalFile(item) != null) {
+                Log.d(TAG, "✅ Already cached, skipping WorkManager: $fileName")
+                return@forEach
             }
-            _videoProgressList.value = initialProgressList
-            
-            // Initialize overall stats with current state
-            val currentCachedCount = (cacheManager.getCacheProgress(playlist.items) * playlist.items.size).toInt()
-            _overallDownloadStats.value = OverallDownloadStats(
-                totalItems = playlist.items.size,
-                completedItems = currentCachedCount,
-                currentlyDownloading = null,
-                currentProgress = 0,
-                totalBytesDownloaded = totalBytesDownloaded,
-                totalBytesRequired = totalBytesRequired
+
+            Log.d(TAG, "enqueueing download for: $fileName ($videoId)")
+
+            val inputData = workDataOf(
+                "videoId" to videoId,
+                "fileName" to fileName,
+                "fileSize" to fileSize,
+                "itemId" to item.id,
+                "baseUrl" to baseUrl
             )
-            
-            Log.d(TAG, "📊 Initial stats: $currentCachedCount/${playlist.items.size} cached, ${totalBytesDownloaded / 1024 / 1024}/${totalBytesRequired / 1024 / 1024} MB")
-            
-            playlist.items.forEachIndexed { index, item ->
-                val fileName = item.video?.fileName ?: "Unknown"
-                val itemId = item.id
-                
-                // Skip if already successfully cached
-                if (cachedItemIds.contains(itemId)) {
-                    skippedCount++
-                    Log.d(TAG, "⏭️ Already cached (${index + 1}/${playlist.items.size}): $fileName")
-                    return@forEachIndexed
-                }
-                
-                // Check if file exists before attempting download
-                if (cacheManager.getLocalFile(item) != null) {
-                    cachedItemIds.add(itemId)
-                    skippedCount++
-                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
-                    Log.d(TAG, "⏭️ File exists (${index + 1}/${playlist.items.size}): $fileName")
-                    
-                    // Update overall stats for already cached items
-                    _overallDownloadStats.value = OverallDownloadStats(
-                        totalItems = playlist.items.size,
-                        completedItems = successCount + skippedCount,
-                        currentlyDownloading = null,
-                        currentProgress = 0,
-                        totalBytesDownloaded = totalBytesDownloaded,
-                        totalBytesRequired = totalBytesRequired
-                    )
-                    
-                    return@forEachIndexed
-                }
-                
-                Log.d(TAG, "📥 Caching item ${index + 1}/${playlist.items.size}: $fileName")
-                
-                // Update overall stats - starting download
-                _overallDownloadStats.value = OverallDownloadStats(
-                    totalItems = playlist.items.size,
-                    completedItems = successCount + skippedCount,
-                    currentlyDownloading = fileName,
-                    currentProgress = 0,
-                    totalBytesDownloaded = totalBytesDownloaded,
-                    totalBytesRequired = totalBytesRequired
-                )
-                
-                val success = try {
-                    cacheManager.downloadMedia(item, baseUrl) { progress ->
-                        // Update current file progress
-                        _currentDownloadProgress.value = progress
+
+            val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
+                .setInputData(inputData)
+                .addTag("download")
+                .addTag("item_${item.id}")
+                .build()
+
+            workManager.enqueueUniqueWork(
+                "download_${item.id}",
+                ExistingWorkPolicy.KEEP,
+                workRequest
+            )
+        }
+        
+        observeDownloadProgress()
+    }
+
+    private fun observeDownloadProgress() {
+        viewModelScope.launch {
+            try {
+                workManager.getWorkInfosByTagFlow("download").collect { workInfos ->
+                    val currentProgressList = _videoProgressList.value.toMutableList()
+                    var hasChanges = false
+                    var totalBytesDownloaded = 0L
+                    var totalBytesRequired = 0L
+                    var activeDownloads = 0
+                    var currentDownloadName: String? = null
+
+                    workInfos.forEach { workInfo ->
+                        val tag = workInfo.tags.find { it.startsWith("item_") }
+                        val itemId = tag?.removePrefix("item_") ?: return@forEach
                         
-                        // Update overall stats with current download progress
-                        _overallDownloadStats.value = OverallDownloadStats(
-                            totalItems = playlist.items.size,
-                            completedItems = successCount + skippedCount,
-                            currentlyDownloading = fileName,
-                            currentProgress = progress.percentage,
-                            totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
-                            totalBytesRequired = totalBytesRequired
-                        )
-                        
-                        // Update video progress list
-                        _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
-                            if (videoProgress.itemId == itemId) {
-                                videoProgress.copy(downloadedBytes = progress.downloadedBytes)
-                            } else {
-                                videoProgress
+                        val index = currentProgressList.indexOfFirst { it.itemId == itemId }
+                        if (index != -1) {
+                            val currentItem = currentProgressList[index]
+                            
+                            when (workInfo.state) {
+                                WorkInfo.State.RUNNING -> {
+                                    val progress = workInfo.progress
+                                    val downloaded = progress.getLong("downloadedBytes", 0L)
+                                    val total = progress.getLong("totalBytes", 0L)
+                                    
+                                    if (downloaded > 0) {
+                                        currentProgressList[index] = currentItem.copy(
+                                            downloadedBytes = downloaded,
+                                            actualTotalBytes = if (total > 0) total else currentItem.fileSize
+                                        )
+                                        hasChanges = true
+                                        activeDownloads++
+                                        currentDownloadName = currentItem.fileName
+                                    }
+                                }
+                                WorkInfo.State.SUCCEEDED -> {
+                                    if (currentItem.downloadedBytes < currentItem.fileSize) {
+                                        currentProgressList[index] = currentItem.copy(
+                                            downloadedBytes = currentItem.fileSize,
+                                            actualTotalBytes = currentItem.fileSize
+                                        )
+                                        hasChanges = true
+                                        
+                                        if (_failedDownloads.value.contains(itemId)) {
+                                            _failedDownloads.value -= itemId
+                                            launch { dataStoreManager.saveFailedDownloads(_failedDownloads.value) }
+                                        }
+                                    }
+                                }
+                                WorkInfo.State.FAILED -> {
+                                    if (!_failedDownloads.value.contains(itemId)) {
+                                        _failedDownloads.value += itemId
+                                        launch { dataStoreManager.saveFailedDownloads(_failedDownloads.value) }
+                                    }
+                                }
+                                else -> {}
                             }
                         }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Exception caching $fileName", e)
-                    false
-                }
-                
-                if (success) {
-                    successCount++
-                    cachedItemIds.add(itemId)
-                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
                     
-                    // Update video progress list - mark as complete
-                    _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
-                        if (videoProgress.itemId == itemId) {
-                            videoProgress.copy(downloadedBytes = videoProgress.fileSize)
-                        } else {
-                            videoProgress
+                    if (hasChanges) {
+                        _videoProgressList.value = currentProgressList
+                        
+                        currentPlaylist?.let { playlist ->
+                            _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
+                            if (_appState.value is AppState.Playing) {
+                                _appState.value = AppState.Playing(playlist, _cacheProgress.value)
+                            }
                         }
+                        
+                        totalBytesDownloaded = currentProgressList.sumOf { it.downloadedBytes }
+                        totalBytesRequired = currentProgressList.sumOf { if (it.actualTotalBytes > 0) it.actualTotalBytes else it.fileSize }
+                        val completedItems = currentProgressList.count { it.downloadedBytes >= it.fileSize && it.fileSize > 0 }
+                        
+                        _overallDownloadStats.value = OverallDownloadStats(
+                            totalItems = currentProgressList.size,
+                            completedItems = completedItems,
+                            currentlyDownloading = currentDownloadName,
+                            currentProgress = if (totalBytesRequired > 0) ((totalBytesDownloaded * 100) / totalBytesRequired).toInt() else 0,
+                            totalBytesDownloaded = totalBytesDownloaded,
+                            totalBytesRequired = totalBytesRequired
+                        )
                     }
-                    
-                    // Remove from failed list if it was there
-                    _failedDownloads.value = _failedDownloads.value - itemId
-                    // Persist failed downloads
-                    viewModelScope.launch {
-                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
-                    }
-                    Log.d(TAG, "✅ Successfully cached: $fileName")
-                } else {
-                    failureCount++
-                    // Add to failed list
-                    _failedDownloads.value = _failedDownloads.value + itemId
-                    // Persist failed downloads
-                    viewModelScope.launch {
-                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
-                    }
-                    Log.e(TAG, "❌ Failed to cache: $fileName (itemId: $itemId)")
                 }
-                
-                // Clear current download progress
-                _currentDownloadProgress.value = null
-                
-                // Update progress after each item
-                _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
-                _appState.value = AppState.Playing(playlist, _cacheProgress.value)
-                
-                // Update overall stats after item completes
-                _overallDownloadStats.value = OverallDownloadStats(
-                    totalItems = playlist.items.size,
-                    completedItems = successCount + skippedCount,
-                    currentlyDownloading = null,
-                    currentProgress = 0,
-                    totalBytesDownloaded = totalBytesDownloaded,
-                    totalBytesRequired = totalBytesRequired
-                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error observing download progress", e)
             }
-            
-            isCaching = false
-            cachingJob = null
-            
-            // Update final storage stats
-            _storageStats.value = cacheManager.getStorageStats()
-            
-            Log.d(TAG, "🏁 Caching complete: $successCount downloaded, $skippedCount already cached, $failureCount failed")
-            Log.d(TAG, "💾 Final storage: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
-            Log.d(TAG, "📦 Cache size: ${_storageStats.value?.cacheBytes?.div(1024)?.div(1024)} MB")
-            
-            if (failureCount > 0) {
-                Log.w(TAG, "⚠️ Some downloads failed. Failed items: ${_failedDownloads.value}")
-            }
-            
-            // Keep final stats for 5 seconds before clearing (so UI can display completion)
-            delay(5000)
-            _currentDownloadProgress.value = null
-            _overallDownloadStats.value = null
         }
     }
 
+
     fun retryFailedDownloads() {
-        viewModelScope.launch {
-            val currentState = _appState.value
-            if (currentState !is AppState.Playing) {
-                Log.w(TAG, "⚠️ Cannot retry downloads - not in Playing state")
-                return@launch
-            }
-
-            val failedItemIds = _failedDownloads.value
-            if (failedItemIds.isEmpty()) {
-                Log.d(TAG, "ℹ️ No failed downloads to retry")
-                return@launch
-            }
-
-            if (_isRetrying.value) {
-                Log.w(TAG, "⚠️ Retry already in progress")
-                return@launch
-            }
-
-            _isRetrying.value = true
-            Log.d(TAG, "🔄 Starting retry for ${failedItemIds.size} failed downloads...")
-
-            val playlist = currentState.playlist
-            val failedItems = playlist.items.filter { failedItemIds.contains(it.id) }
-            val totalBytesRequired = failedItems.sumOf { it.video?.fileSize ?: 0L }
-
-            var retrySuccessCount = 0
-            var retryFailCount = 0
-            var totalBytesDownloaded = 0L
+        Log.d(TAG, "🔄 Retrying failed downloads via WorkManager")
+        
+        val failedItemIds = _failedDownloads.value
+        if (failedItemIds.isEmpty()) {
+            Log.d(TAG, "ℹ️ No failed downloads to retry")
+            return
+        }
+        
+        val playlist = currentPlaylist ?: return
+        
+        failedItemIds.forEach { itemId ->
+            val item = playlist.items.find { it.id == itemId } ?: return@forEach
+            val videoId = item.video?.id ?: return@forEach
+            val fileName = item.video?.fileName ?: "Unknown"
+            val fileSize = item.video?.fileSize ?: 0L
             
-            // Initialize overall stats for retry
-            _overallDownloadStats.value = OverallDownloadStats(
-                totalItems = failedItems.size,
-                completedItems = 0,
-                currentlyDownloading = null,
-                currentProgress = 0,
-                totalBytesDownloaded = 0L,
-                totalBytesRequired = totalBytesRequired
+            Log.d(TAG, "enqueueing retry for: $fileName ($videoId)")
+
+            val inputData = workDataOf(
+                "videoId" to videoId,
+                "fileName" to fileName,
+                "fileSize" to fileSize,
+                "itemId" to item.id,
+                "baseUrl" to baseUrl
             )
 
-            failedItems.forEachIndexed { index, item ->
-                val fileName = item.video?.fileName ?: "Unknown"
-                Log.d(TAG, "🔄 Retrying (${index + 1}/${failedItems.size}): $fileName")
+            val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
+                .setInputData(inputData)
+                .addTag("download")
+                .addTag("item_${item.id}")
+                .build()
 
-                // Update overall stats - starting retry
-                _overallDownloadStats.value = OverallDownloadStats(
-                    totalItems = failedItems.size,
-                    completedItems = retrySuccessCount,
-                    currentlyDownloading = fileName,
-                    currentProgress = 0,
-                    totalBytesDownloaded = totalBytesDownloaded,
-                    totalBytesRequired = totalBytesRequired
-                )
-
-                val success = try {
-                    cacheManager.downloadMedia(item, baseUrl) { progress ->
-                        // Update current file progress
-                        _currentDownloadProgress.value = progress
-                        
-                        // Update overall stats with current download progress
-                        _overallDownloadStats.value = OverallDownloadStats(
-                            totalItems = failedItems.size,
-                            completedItems = retrySuccessCount,
-                            currentlyDownloading = fileName,
-                            currentProgress = progress.percentage,
-                            totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
-                            totalBytesRequired = totalBytesRequired
-                        )
-                        
-                        // Update video progress list
-                        _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
-                            if (videoProgress.itemId == item.id) {
-                                videoProgress.copy(downloadedBytes = progress.downloadedBytes)
-                            } else {
-                                videoProgress
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Exception during retry for $fileName", e)
-                    false
-                }
-
-                if (success) {
-                    retrySuccessCount++
-                    cachedItemIds.add(item.id)
-                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
-                    
-                    // Update video progress list - mark as complete
-                    _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
-                        if (videoProgress.itemId == item.id) {
-                            videoProgress.copy(downloadedBytes = videoProgress.fileSize)
-                        } else {
-                            videoProgress
-                        }
-                    }
-                    
-                    _failedDownloads.value = _failedDownloads.value - item.id
-                    // Persist failed downloads
-                    viewModelScope.launch {
-                        dataStoreManager.saveFailedDownloads(_failedDownloads.value)
-                    }
-                    Log.d(TAG, "✅ Retry successful: $fileName")
-                } else {
-                    retryFailCount++
-                    Log.e(TAG, "❌ Retry failed: $fileName")
-                }
-
-                // Clear current download progress
-                _currentDownloadProgress.value = null
-
-                // Update progress after each retry
-                _cacheProgress.value = cacheManager.getCacheProgress(playlist.items)
-                _appState.value = AppState.Playing(playlist, _cacheProgress.value)
-                
-                // Update overall stats after retry completes
-                _overallDownloadStats.value = OverallDownloadStats(
-                    totalItems = failedItems.size,
-                    completedItems = retrySuccessCount,
-                    currentlyDownloading = null,
-                    currentProgress = 0,
-                    totalBytesDownloaded = totalBytesDownloaded,
-                    totalBytesRequired = totalBytesRequired
-                )
-            }
-
-            _isRetrying.value = false
-            
-            // Update storage stats after retry
-            _storageStats.value = cacheManager.getStorageStats()
-            
-            Log.d(TAG, "🏁 Retry complete: $retrySuccessCount succeeded, $retryFailCount still failed")
-            Log.d(TAG, "💾 Storage after retry: ${_storageStats.value?.availableBytes?.div(1024)?.div(1024)} MB available")
-            
-            // Keep final stats for 5 seconds before clearing
-            delay(5000)
-            _currentDownloadProgress.value = null
-            _overallDownloadStats.value = null
-            
-            if (retryFailCount > 0) {
-                Log.w(TAG, "⚠️ Still have ${_failedDownloads.value.size} failed downloads")
-            } else {
-                Log.d(TAG, "🎉 All downloads successful!")
-            }
+            workManager.enqueueUniqueWork(
+                "download_${item.id}",
+                ExistingWorkPolicy.REPLACE, // Replace existing failed work
+                workRequest
+            )
         }
+        
+        // Clear failed downloads list optimistically, they will be re-added if they fail again
+        _failedDownloads.value = emptySet()
+        viewModelScope.launch { dataStoreManager.saveFailedDownloads(emptySet()) }
     }
 
     fun manualDeregister() {
@@ -1102,15 +936,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun initializeVideoProgressList(playlist: Playlist) {
         val progressList = playlist.items.map { item ->
             val fileSize = item.video?.fileSize ?: 0L
-            val downloadedBytes = if (cacheManager.getLocalFile(item) != null) fileSize else 0L
+            
+            // Check actual file size on disk (including partial downloads)
+            val fileName = item.video?.fileName ?: "Unknown"
+            val actualFileName = if (fileName.contains(".")) fileName else "$fileName.mp4"
+            val file = File(getApplication<Application>().filesDir, "media_cache/$actualFileName")
+            
+            val downloadedBytes = if (file.exists() && file.length() > 0) {
+                file.length()
+            } else {
+                0L
+            }
+            
             VideoDownloadProgress(
                 itemId = item.id,
-                fileName = item.video?.fileName ?: "Unknown",
+                fileName = fileName,
                 fileSize = fileSize,
                 downloadedBytes = downloadedBytes
             )
         }
         _videoProgressList.value = progressList
         Log.d(TAG, "📊 Initialized video progress list with ${progressList.size} items")
+    }
+    
+    /**
+     * Expose MediaCacheManager for UI components
+     */
+    fun getMediaCacheManager(): MediaCacheManager {
+        return cacheManager
     }
 }

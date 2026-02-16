@@ -78,6 +78,7 @@ dependencies {
 
     // Lifecycle
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.work.runtime.ktx)
     
     // Socket.IO
     implementation(libs.socket.io.client)

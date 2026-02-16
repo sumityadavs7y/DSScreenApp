@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 class MainActivity : ComponentActivity() {
     private val TAG = "MainActivity"
@@ -88,7 +89,10 @@ class MainActivity : ComponentActivity() {
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
         
-        // Load and apply saved rotation
+        // Load and apply saved rotation IMMEDIATELY to override device default
+        loadAndApplySavedRotationSync()
+        
+        // Then load rotation asynchronously for state management
         loadAndApplySavedRotation()
         
         // Load saved display mode
@@ -234,6 +238,7 @@ class MainActivity : ComponentActivity() {
                                         failedDownloadCount = failedDownloads.size,
                                         isRetrying = isRetrying,
                                         storageStats = storageStats,
+                                        mediaCacheManager = viewModel.getMediaCacheManager(),
                                         videoProgressList = videoProgressList,
                                         onBackToPlaylist = { showStats = false },
                                         onReset = { 
@@ -341,12 +346,34 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Load saved rotation preference and apply it
+     * Load and apply saved screen rotation SYNCHRONOUSLY on app start
+     * This ensures rotation is applied immediately, overriding device default
      */
+    private fun loadAndApplySavedRotationSync() {
+        // Use runBlocking to ensure rotation is applied BEFORE UI renders
+        runBlocking {
+            val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
+            Log.d(TAG, "🔄 [SYNC] Loading saved rotation: $savedRotation")
+            
+            // Apply rotation immediately to override device default
+            val orientation = when (savedRotation) {
+                "0" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                "90" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                "180" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                "270" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            }
+            
+            requestedOrientation = orientation
+            Log.d(TAG, "🔄 [SYNC] Applied orientation immediately: $savedRotation")
+        }
+    }
+    
     private fun loadAndApplySavedRotation() {
         lifecycleScope.launch {
             val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
-            Log.d(TAG, "🔄 Loading saved rotation: $savedRotation")
+            Log.d(TAG, "🔄 [ASYNC] Loading saved rotation: $savedRotation")
             _currentRotation.value = savedRotation
             applyRotation(savedRotation)
         }
