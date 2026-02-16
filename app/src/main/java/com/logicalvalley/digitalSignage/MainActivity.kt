@@ -89,10 +89,7 @@ class MainActivity : ComponentActivity() {
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
         
-        // Load and apply saved rotation IMMEDIATELY to override device default
-        loadAndApplySavedRotationSync()
-        
-        // Then load rotation asynchronously for state management
+        // Load and apply saved rotation asynchronously
         loadAndApplySavedRotation()
         
         // Load saved display mode
@@ -289,6 +286,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            hideSystemUI()
+            // Enforce rotation when window gains focus (handles system dialogs/interruptions)
+            val savedRotation = _currentRotation.value
+            if (savedRotation != "AUTO") {
+                applyRotation(savedRotation)
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "🛑 MainActivity onDestroy")
@@ -345,31 +354,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Load and apply saved screen rotation SYNCHRONOUSLY on app start
-     * This ensures rotation is applied immediately, overriding device default
-     */
-    private fun loadAndApplySavedRotationSync() {
-        // Use runBlocking to ensure rotation is applied BEFORE UI renders
-        runBlocking {
-            val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
-            Log.d(TAG, "🔄 [SYNC] Loading saved rotation: $savedRotation")
-            
-            // Apply rotation immediately to override device default
-            val orientation = when (savedRotation) {
-                "0" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                "90" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                "180" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-                "270" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-                else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-            }
-            
-            requestedOrientation = orientation
-            Log.d(TAG, "🔄 [SYNC] Applied orientation immediately: $savedRotation")
-        }
-    }
-    
     private fun loadAndApplySavedRotation() {
         lifecycleScope.launch {
             val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
@@ -388,10 +372,10 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG, "↻ Clockwise rotation from: $current")
             
             val nextRotation = if (current == "AUTO") {
-                "90" // Start from landscape when rotating from auto
+                "270" // Start from reverse landscape when rotating from auto
             } else {
-                val currentAngle = current.toIntOrNull() ?: 0
-                val nextAngle = (currentAngle + 90) % 360
+                val currentAngle = current.trim().toIntOrNull() ?: 0
+                val nextAngle = (currentAngle - 90 + 360) % 360
                 nextAngle.toString()
             }
             
@@ -409,10 +393,10 @@ class MainActivity : ComponentActivity() {
             Log.d(TAG, "↺ Anti-clockwise rotation from: $current")
             
             val nextRotation = if (current == "AUTO") {
-                "270" // Start from reverse landscape when rotating from auto
+                "90" // Start from landscape when rotating from auto
             } else {
-                val currentAngle = current.toIntOrNull() ?: 0
-                val nextAngle = (currentAngle - 90 + 360) % 360
+                val currentAngle = current.trim().toIntOrNull() ?: 0
+                val nextAngle = (currentAngle + 90) % 360
                 nextAngle.toString()
             }
             
@@ -462,8 +446,10 @@ class MainActivity : ComponentActivity() {
         
         // Apply orientation immediately on main thread
         runOnUiThread {
-            requestedOrientation = orientation
-            Log.d(TAG, "🔄 Applied orientation: $rotation (${getOrientationName(orientation)})")
+            if (requestedOrientation != orientation) {
+                requestedOrientation = orientation
+                Log.d(TAG, "🔄 Applied orientation: $rotation (${getOrientationName(orientation)})")
+            }
         }
     }
     
