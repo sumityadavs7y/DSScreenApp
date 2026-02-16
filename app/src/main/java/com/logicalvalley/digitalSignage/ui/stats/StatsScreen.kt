@@ -33,6 +33,10 @@ import java.util.concurrent.TimeUnit
 import androidx.compose.ui.res.painterResource
 import com.logicalvalley.digitalSignage.R
 import com.logicalvalley.digitalSignage.data.local.MediaCacheManager
+import com.logicalvalley.digitalSignage.viewmodel.MainViewModel
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
 
 /**
  * Robust UI for displaying device and playlist statistics.
@@ -48,6 +52,7 @@ fun StatsScreen(
     failedDownloadCount: Int,
     isRetrying: Boolean,
     storageStats: MediaCacheManager.StorageStats?,
+    videoProgressList: List<MainViewModel.VideoDownloadProgress>,
     onBackToPlaylist: () -> Unit,
     onReset: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -242,6 +247,21 @@ fun StatsScreen(
                         }
                     )
                     
+                    // Segmented Download Progress Bar
+                    if (videoProgressList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Download Progress",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SegmentedProgressBar(
+                            videoProgressList = videoProgressList,
+                            modifier = Modifier.width(300.dp).height(24.dp)
+                        )
+                    }
+                    
                     // Storage Information
                     storageStats?.let { stats ->
                         Spacer(modifier = Modifier.height(24.dp))
@@ -401,6 +421,77 @@ private fun PlaylistItemRow(item: PlaylistItem) {
     }
 }
 
+
+/**
+ * Segmented Progress Bar - shows download progress per video
+ * Each segment width is proportional to video file size
+ * Segments fill from left to right like traditional progress bars
+ * Colors: Grey (empty) -> Orange (filling) -> Green (complete)
+ */
+@Composable
+private fun SegmentedProgressBar(
+    videoProgressList: List<MainViewModel.VideoDownloadProgress>,
+    modifier: Modifier = Modifier
+) {
+    val totalSize = videoProgressList.sumOf { it.fileSize }.toFloat()
+    
+    if (totalSize <= 0f) {
+        // Fallback if no size data
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color.DarkGray)
+        )
+        return
+    }
+    
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .border(1.dp, Color.Black.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+    ) {
+        videoProgressList.forEachIndexed { index, video ->
+            // Each segment with traditional left-to-right fill
+            val widthFraction = (video.fileSize.toFloat() / totalSize)
+            val progress = video.getProgress()
+            
+            // Background color (empty/unfilled portion)
+            val backgroundColor = Color(0xFF424242)  // Grey
+            
+            // Foreground color (filled portion) based on progress
+            val foregroundColor = when {
+                progress >= 1.0f -> Color(0xFF4CAF50)  // Green - complete
+                progress > 0f -> Color(0xFFFF9800)      // Orange - in progress
+                else -> backgroundColor                  // Same as background when not started
+            }
+            
+            Box(
+                modifier = Modifier
+                    .weight(widthFraction)
+                    .fillMaxHeight()
+                    .background(backgroundColor)
+            ) {
+                // Filled portion - grows from left to right
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .fillMaxHeight()
+                        .background(foregroundColor)
+                )
+            }
+            
+            // Add vertical divider between segments (not after last one)
+            if (index < videoProgressList.size - 1) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(Color.Black.copy(alpha = 0.6f))
+                )
+            }
+        }
+    }
+}
 
 /**
  * Pure logic helper to handle data processing for the Stats Screen.

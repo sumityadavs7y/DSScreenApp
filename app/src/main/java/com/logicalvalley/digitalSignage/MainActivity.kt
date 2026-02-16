@@ -108,6 +108,7 @@ class MainActivity : ComponentActivity() {
                 val failedDownloads by viewModel.failedDownloads.collectAsState()
                 val isRetrying by viewModel.isRetrying.collectAsState()
                 val storageStats by viewModel.storageStats.collectAsState()
+                val videoProgressList by viewModel.videoProgressList.collectAsState()
                 var showStats by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
                 var showCustomDisplayMode by remember { mutableStateOf(false) }
@@ -233,6 +234,7 @@ class MainActivity : ComponentActivity() {
                                         failedDownloadCount = failedDownloads.size,
                                         isRetrying = isRetrying,
                                         storageStats = storageStats,
+                                        videoProgressList = videoProgressList,
                                         onBackToPlaylist = { showStats = false },
                                         onReset = { 
                                             showStats = false

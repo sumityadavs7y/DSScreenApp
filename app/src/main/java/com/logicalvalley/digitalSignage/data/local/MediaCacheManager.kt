@@ -48,17 +48,112 @@ class MediaCacheManager(private val context: Context) {
         } else {
             Log.d(TAG, "📁 Cache directory exists at: ${cacheDir.absolutePath}")
         }
+        
+        // Migrate old cached files without extensions
+        migrateOldCacheFiles()
+    }
+    
+    /**
+     * Migrate old cached files by adding .mp4 extension if they don't have one
+     * Also validates file integrity and removes corrupted files
+     */
+    private fun migrateOldCacheFiles() {
+        try {
+            val cachedFiles = cacheDir.listFiles() ?: return
+            val validExtensions = listOf(".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".flv", ".jpg", ".jpeg", ".png", ".gif")
+            
+            var migratedCount = 0
+            var deletedCount = 0
+            
+            cachedFiles.forEach { file ->
+                if (file.isFile) {
+                    // Check if file is suspiciously small (likely incomplete)
+                    if (file.length() < 1024) { // Less than 1KB
+                        Log.w(TAG, "🗑️ Deleting suspiciously small file: ${file.name} (${file.length()} bytes)")
+                        if (file.delete()) {
+                            deletedCount++
+                        }
+                        return@forEach
+                    }
+                    
+                    val hasExtension = validExtensions.any { ext ->
+                        file.name.lowercase().endsWith(ext)
+                    }
+                    
+                    if (!hasExtension) {
+                        // File doesn't have extension, add .mp4
+                        val newFile = File(cacheDir, "${file.name}.mp4")
+                        if (file.renameTo(newFile)) {
+                            migratedCount++
+                            Log.d(TAG, "📝 Migrated: ${file.name} -> ${newFile.name}")
+                        } else {
+                            Log.w(TAG, "⚠️ Failed to migrate: ${file.name}")
+                        }
+                    }
+                }
+            }
+            
+            if (migratedCount > 0 || deletedCount > 0) {
+                Log.d(TAG, "✅ Migration complete: $migratedCount files migrated, $deletedCount invalid files deleted")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during cache migration", e)
+        }
     }
 
     fun getLocalFile(item: PlaylistItem): File? {
-        val fileName = item.video?.fileName ?: return null
+        val originalFileName = item.video?.fileName ?: return null
+        
+        // Ensure filename has a valid video extension
+        val fileName = ensureVideoExtension(originalFileName)
+        
         val file = File(cacheDir, fileName)
-        return if (file.exists() && file.length() > 0) {
+        val expectedSize = item.video?.fileSize ?: 0L
+        
+        if (file.exists() && file.length() > 0) {
+            // Verify file size matches expected size (with 1% tolerance for metadata)
+            val actualSize = file.length()
+            val sizeTolerance = (expectedSize * 0.01).toLong().coerceAtLeast(1024) // 1% or 1KB minimum
+            
+            if (expectedSize > 0 && Math.abs(actualSize - expectedSize) > sizeTolerance) {
+                Log.w(TAG, "⚠️ Incomplete file detected: $fileName")
+                Log.w(TAG, "   Expected: ${expectedSize / 1024} KB, Found: ${actualSize / 1024} KB")
+                Log.w(TAG, "   Difference: ${(expectedSize - actualSize) / 1024} KB")
+                
+                // Delete incomplete file so it will be re-downloaded
+                if (file.delete()) {
+                    Log.d(TAG, "🗑️ Deleted incomplete file: $fileName")
+                } else {
+                    Log.e(TAG, "❌ Failed to delete incomplete file: $fileName")
+                }
+                return null
+            }
+            
             Log.d(TAG, "✅ Local file found: $fileName (${file.length()} bytes)")
-            file
+            return file
         } else {
             Log.d(TAG, "❌ Local file not found or empty: $fileName")
-            null
+            return null
+        }
+    }
+    
+    /**
+     * Ensures the filename has a valid video extension.
+     * If no extension is present, adds .mp4 as default.
+     */
+    private fun ensureVideoExtension(fileName: String): String {
+        val validExtensions = listOf(".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".3gp", ".flv")
+        
+        // Check if filename already has a valid video extension
+        val hasValidExtension = validExtensions.any { ext ->
+            fileName.lowercase().endsWith(ext)
+        }
+        
+        return if (hasValidExtension) {
+            fileName
+        } else {
+            // Add .mp4 as default extension
+            "$fileName.mp4"
         }
     }
 
@@ -67,19 +162,31 @@ class MediaCacheManager(private val context: Context) {
         baseUrl: String,
         onProgress: ((DownloadProgress) -> Unit)? = null
     ): Boolean = withContext(Dispatchers.IO) {
-        val fileName = item.video?.fileName ?: run {
+        val originalFileName = item.video?.fileName ?: run {
             Log.e(TAG, "❌ No filename for item: ${item.id}")
             return@withContext false
+        }
+        
+        // Ensure filename has a valid video extension
+        val fileName = ensureVideoExtension(originalFileName)
+        if (fileName != originalFileName) {
+            Log.d(TAG, "📝 Added extension: $originalFileName -> $fileName")
         }
         
         val videoId = item.video.id
         val downloadUrl = "$baseUrl/api/media/$videoId/download"
         val file = File(cacheDir, fileName)
 
-        // Check if already cached
-        if (file.exists() && file.length() > 0) {
-            Log.d(TAG, "⏭️ Already cached: $fileName (${file.length()} bytes)")
+        // Check if already cached and complete (use getLocalFile for validation)
+        if (getLocalFile(item) != null) {
+            Log.d(TAG, "⏭️ Already cached and verified: $fileName (${file.length()} bytes)")
             return@withContext true
+        }
+        
+        // Delete any existing incomplete file before downloading
+        if (file.exists()) {
+            Log.d(TAG, "🗑️ Deleting incomplete file before re-download: $fileName")
+            file.delete()
         }
 
         // Check storage availability before downloading
@@ -154,14 +261,28 @@ class MediaCacheManager(private val context: Context) {
             }
 
             val finalSize = file.length()
-            if (finalSize > 0) {
-                Log.d(TAG, "✅ Successfully downloaded: $fileName (${finalSize / 1024} KB)")
-                return@withContext true
-            } else {
+            
+            // Validate download completion
+            if (finalSize <= 0) {
                 Log.e(TAG, "❌ Downloaded file is empty: $fileName")
                 file.delete()
                 return@withContext false
             }
+            
+            // Verify file size matches expected size (with tolerance)
+            if (estimatedSize > 0) {
+                val sizeTolerance = (estimatedSize * 0.01).toLong().coerceAtLeast(1024) // 1% or 1KB minimum
+                if (Math.abs(finalSize - estimatedSize) > sizeTolerance) {
+                    Log.e(TAG, "❌ File size mismatch for $fileName")
+                    Log.e(TAG, "   Expected: ${estimatedSize / 1024} KB, Got: ${finalSize / 1024} KB")
+                    Log.e(TAG, "   Difference: ${(estimatedSize - finalSize) / 1024} KB")
+                    file.delete()
+                    return@withContext false
+                }
+            }
+            
+            Log.d(TAG, "✅ Successfully downloaded: $fileName (${finalSize / 1024} KB)")
+            return@withContext true
 
         } catch (e: Exception) {
             Log.e(TAG, "❌ Exception downloading $fileName: ${e.javaClass.simpleName} - ${e.message}", e)
@@ -265,7 +386,11 @@ class MediaCacheManager(private val context: Context) {
      */
     fun clearOrphanedCache(currentPlaylistItems: List<PlaylistItem>) {
         try {
-            val currentFileNames = currentPlaylistItems.mapNotNull { it.video?.fileName }.toSet()
+            // Get current filenames with extensions added
+            val currentFileNames = currentPlaylistItems.mapNotNull { 
+                it.video?.fileName?.let { name -> ensureVideoExtension(name) }
+            }.toSet()
+            
             val cachedFiles = cacheDir.listFiles() ?: return
             
             var deletedCount = 0

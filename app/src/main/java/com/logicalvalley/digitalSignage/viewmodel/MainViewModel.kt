@@ -26,6 +26,11 @@ import kotlinx.coroutines.Job
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlinx.coroutines.delay
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 
 sealed class AppState {
     object Loading : AppState()
@@ -98,8 +103,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
+    // Individual video download progress
+    data class VideoDownloadProgress(
+        val itemId: String,
+        val fileName: String,
+        val fileSize: Long,
+        val downloadedBytes: Long
+    ) {
+        fun getProgress(): Float {
+            return if (fileSize > 0) {
+                (downloadedBytes.toFloat() / fileSize.toFloat()).coerceIn(0f, 1f)
+            } else 0f
+        }
+    }
+    
     private val _overallDownloadStats = MutableStateFlow<OverallDownloadStats?>(null)
     val overallDownloadStats: StateFlow<OverallDownloadStats?> = _overallDownloadStats.asStateFlow()
+    
+    private val _videoProgressList = MutableStateFlow<List<VideoDownloadProgress>>(emptyList())
+    val videoProgressList: StateFlow<List<VideoDownloadProgress>> = _videoProgressList.asStateFlow()
+    
+    private val _isNetworkConnected = MutableStateFlow(false)
+    val isNetworkConnected: StateFlow<Boolean> = _isNetworkConnected.asStateFlow()
 
     private var currentPlaylistJson: String? = null
     private var lastLicenseExpiry: Date? = null
@@ -107,6 +132,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var cachedItemIds = mutableSetOf<String>()
     private var qrExpiryTime: Date? = null
     private var cachingJob: Job? = null
+    private var currentPlaylist: Playlist? = null
+    private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
     init {
         // Reset caching flag on app start (coroutines don't survive app restart)
@@ -116,9 +143,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isSocketConnected.value = connected
         })
         setupSocketListeners()
+        setupNetworkMonitoring()
         loadFailedDownloads()
         checkRegistration()
         startPeriodicCheck()
+    }
+    
+    private fun setupNetworkMonitoring() {
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+            
+        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                Log.d(TAG, "🌐 Network connected")
+                val wasDisconnected = !_isNetworkConnected.value
+                _isNetworkConnected.value = true
+                
+                // Auto-resume downloads if they were interrupted
+                if (wasDisconnected) {
+                    Log.d(TAG, "🔄 Network reconnected - checking for pending downloads")
+                    viewModelScope.launch {
+                        delay(2000) // Wait for network to stabilize
+                        autoResumeDownloads()
+                    }
+                }
+            }
+            
+            override fun onLost(network: Network) {
+                Log.d(TAG, "📡 Network disconnected")
+                _isNetworkConnected.value = false
+            }
+        }
+        
+        try {
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+            // Check initial state
+            val activeNetwork = connectivityManager.activeNetwork
+            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+            _isNetworkConnected.value = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to register network callback", e)
+        }
+    }
+    
+    private fun autoResumeDownloads() {
+        currentPlaylist?.let { playlist ->
+            val progress = cacheManager.getCacheProgress(playlist.items)
+            if (progress < 1.0f && !isCaching) {
+                Log.d(TAG, "🔄 Auto-resuming downloads (progress: ${(progress * 100).toInt()}%)")
+                startCaching(playlist)
+            }
+        }
     }
     
     private fun loadFailedDownloads() {
@@ -243,6 +319,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         Log.d(TAG, "▶️ Starting playback from cache...")
                         val playlist = gson.fromJson(savedPlaylistJson, Playlist::class.java)
                         currentPlaylistJson = savedPlaylistJson
+                        currentPlaylist = playlist
+                        
+                        // Initialize video progress list on app restart
+                        initializeVideoProgressList(playlist)
                         
                         // Check if caching is incomplete and resume if needed
                         val cacheProgress = cacheManager.getCacheProgress(playlist.items)
@@ -455,6 +535,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val newPlaylist = currentPlaylist.copy(items = response.items)
                         val newPlaylistJson = gson.toJson(newPlaylist)
                         
+                        // Initialize video progress list for new playlist
+                        initializeVideoProgressList(newPlaylist)
+                        
                         // 2. Update state if needed (always update if Loading)
                         if (newPlaylistJson != currentPlaylistJson || _appState.value is AppState.Loading) {
                             Log.d(TAG, "🆕 Updating items and transitioning to Playing state")
@@ -596,6 +679,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         cachingJob = viewModelScope.launch {
             isCaching = true
+            currentPlaylist = playlist  // Store for auto-resume
             Log.d(TAG, "🔽 Starting media caching for ${playlist.items.size} items...")
             
             // Get initial storage stats
@@ -620,12 +704,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             var totalBytesDownloaded = 0L
             val totalBytesRequired = playlist.items.sumOf { it.video?.fileSize ?: 0L }
             
-            // Calculate already cached items and bytes
-            playlist.items.forEach { item ->
-                if (cacheManager.getLocalFile(item) != null) {
-                    totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+            // Initialize video progress list with all items
+            val initialProgressList = playlist.items.map { item ->
+                val fileSize = item.video?.fileSize ?: 0L
+                val downloadedBytes = if (cacheManager.getLocalFile(item) != null) fileSize else 0L
+                if (downloadedBytes > 0) {
+                    totalBytesDownloaded += downloadedBytes
                 }
+                VideoDownloadProgress(
+                    itemId = item.id,
+                    fileName = item.video?.fileName ?: "Unknown",
+                    fileSize = fileSize,
+                    downloadedBytes = downloadedBytes
+                )
             }
+            _videoProgressList.value = initialProgressList
             
             // Initialize overall stats with current state
             val currentCachedCount = (cacheManager.getCacheProgress(playlist.items) * playlist.items.size).toInt()
@@ -697,6 +790,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
                             totalBytesRequired = totalBytesRequired
                         )
+                        
+                        // Update video progress list
+                        _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
+                            if (videoProgress.itemId == itemId) {
+                                videoProgress.copy(downloadedBytes = progress.downloadedBytes)
+                            } else {
+                                videoProgress
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Exception caching $fileName", e)
@@ -707,6 +809,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     successCount++
                     cachedItemIds.add(itemId)
                     totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                    
+                    // Update video progress list - mark as complete
+                    _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
+                        if (videoProgress.itemId == itemId) {
+                            videoProgress.copy(downloadedBytes = videoProgress.fileSize)
+                        } else {
+                            videoProgress
+                        }
+                    }
+                    
                     // Remove from failed list if it was there
                     _failedDownloads.value = _failedDownloads.value - itemId
                     // Persist failed downloads
@@ -832,6 +944,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             totalBytesDownloaded = totalBytesDownloaded + progress.downloadedBytes,
                             totalBytesRequired = totalBytesRequired
                         )
+                        
+                        // Update video progress list
+                        _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
+                            if (videoProgress.itemId == item.id) {
+                                videoProgress.copy(downloadedBytes = progress.downloadedBytes)
+                            } else {
+                                videoProgress
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Exception during retry for $fileName", e)
@@ -842,6 +963,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     retrySuccessCount++
                     cachedItemIds.add(item.id)
                     totalBytesDownloaded += (item.video?.fileSize ?: 0L)
+                    
+                    // Update video progress list - mark as complete
+                    _videoProgressList.value = _videoProgressList.value.map { videoProgress ->
+                        if (videoProgress.itemId == item.id) {
+                            videoProgress.copy(downloadedBytes = videoProgress.fileSize)
+                        } else {
+                            videoProgress
+                        }
+                    }
+                    
                     _failedDownloads.value = _failedDownloads.value - item.id
                     // Persist failed downloads
                     viewModelScope.launch {
@@ -963,5 +1094,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             
             Log.d(TAG, "📊 Updated stats for in-progress: $currentCachedCount/${playlist.items.size} cached, ${totalBytesDownloaded / 1024 / 1024}/${totalBytesRequired / 1024 / 1024} MB")
         }
+    }
+    
+    /**
+     * Initialize video progress list based on currently cached files
+     */
+    private fun initializeVideoProgressList(playlist: Playlist) {
+        val progressList = playlist.items.map { item ->
+            val fileSize = item.video?.fileSize ?: 0L
+            val downloadedBytes = if (cacheManager.getLocalFile(item) != null) fileSize else 0L
+            VideoDownloadProgress(
+                itemId = item.id,
+                fileName = item.video?.fileName ?: "Unknown",
+                fileSize = fileSize,
+                downloadedBytes = downloadedBytes
+            )
+        }
+        _videoProgressList.value = progressList
+        Log.d(TAG, "📊 Initialized video progress list with ${progressList.size} items")
     }
 }
