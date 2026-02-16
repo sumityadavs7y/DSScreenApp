@@ -68,27 +68,14 @@ class MediaCacheManager(private val context: Context) {
     fun getLocalFile(item: PlaylistItem): File? {
         val fileName = ensureExtension(item.video?.fileName ?: return null)
         val file = File(cacheDir, fileName)
-        val expectedSize = item.video?.fileSize ?: 0L
         
-        // Strict check: file exists and has reasonable size (> 1KB)
-        if (file.exists() && file.canRead()) {
-             // If we have a valid expected size, enforce it
-             if (expectedSize > 0) {
-                 if (file.length() == expectedSize) {
-                     Log.d(TAG, "✅ Found cached file: $fileName (${file.length() / 1024}KB)")
-                     return file
-                 } else {
-                     // File exists but size doesn't match (partial or corrupted)
-                     // Do NOT return it, so it's treated as not cached
-                     return null
-                 }
-             }
-             
-             // Fallback for when expected size is 0 (shouldn't happen with valid API data)
-             if (file.length() > 1024) {
-                 Log.d(TAG, "✅ Found cached file (no size check): $fileName")
-                 return file
-             }
+        // Check if the FINAL file exists and is readable.
+        // We trust the download process (which uses .download temp files) to only create this file when complete.
+        // We do NOT check exact file size against DB here, because DB size might be slightly off vs actual network size,
+        // and we don't want to reject a valid file just because of a metadata mismatch.
+        if (file.exists() && file.canRead() && file.length() > 1024) {
+            // Log.d(TAG, "✅ Found cached file: $fileName")
+            return file
         }
         
         return null
@@ -104,23 +91,22 @@ class MediaCacheManager(private val context: Context) {
     ): Boolean = withContext(Dispatchers.IO) {
         val actualFileName = ensureExtension(fileName)
         val downloadUrl = "$baseUrl/api/media/$videoId/download"
-        val file = File(cacheDir, actualFileName)
+        val finalFile = File(cacheDir, actualFileName)
+        val tempFile = File(cacheDir, "$actualFileName.download")
         val expectedSize = fileSize
 
         try {
-            // Check if already complete
-            if (file.exists() && file.canRead()) {
-                val currentLength = file.length()
-                if (expectedSize > 0 && currentLength == expectedSize) {
-                    Log.d(TAG, "✅ Already cached (verified size): $actualFileName")
+            // Check if already complete (final file exists)
+            if (finalFile.exists() && finalFile.canRead()) {
+                val currentLength = finalFile.length()
+                // If we have a valid expected size, check it, but be tolerant if it's close or if we trust existence
+                // Ideally, if it exists as the final name, we assume it's good unless it's obviously broken (0 bytes)
+                if (currentLength > 1024) {
+                    Log.d(TAG, "✅ Already cached: $actualFileName")
                     return@withContext true
-                } else if (expectedSize > 0 && currentLength > expectedSize) {
-                    Log.w(TAG, "⚠️ File larger than expected ($currentLength > $expectedSize). Deleting and re-downloading.")
-                    file.delete()
-                } else if (currentLength > 1024 && expectedSize <= 0) {
-                    // Fallback for when expected size is unknown but file seems valid
-                    Log.d(TAG, "✅ Already cached (unknown size, >1KB): $actualFileName")
-                    return@withContext true
+                } else {
+                    Log.w(TAG, "⚠️ Existing file too small, re-downloading: $actualFileName")
+                    finalFile.delete()
                 }
             }
 
@@ -132,8 +118,8 @@ class MediaCacheManager(private val context: Context) {
                 return@withContext false
             }
 
-            // Get existing file size for resume
-            val existingSize = if (file.exists()) file.length() else 0L
+            // Get existing temp file size for resume
+            val existingSize = if (tempFile.exists()) tempFile.length() else 0L
             
             // Build request with Range header for resume
             val requestBuilder = Request.Builder().url(downloadUrl)
@@ -159,8 +145,8 @@ class MediaCacheManager(private val context: Context) {
                 contentLength
             }
 
-            // Open file for writing (append if resuming, overwrite if new)
-            val randomAccessFile = RandomAccessFile(file, "rw")
+            // Open temp file for writing (append if resuming, overwrite if new)
+            val randomAccessFile = RandomAccessFile(tempFile, "rw")
             if (response.code == 206) {
                 randomAccessFile.seek(existingSize)
             } else {
@@ -211,28 +197,20 @@ class MediaCacheManager(private val context: Context) {
 
             randomAccessFile.close()
 
-            // Ensure file has read permissions
-            try {
-                file.setReadable(true, false)
-            } catch (e: Exception) {
-                Log.w(TAG, "⚠️ Could not set read permissions: ${e.message}")
-            }
-
-            // Validation: check file exists, has reasonable size, and is readable
-            val finalSize = file.length()
-            val canRead = file.canRead()
-            
-            val isSizeCorrect = if (fileSize > 0) finalSize == fileSize else finalSize > 1024
-
-            if (isSizeCorrect && canRead) {
-                Log.d(TAG, "✅ Downloaded: $actualFileName (${finalSize / 1024}KB, readable: $canRead)")
-                Log.d(TAG, "📂 Saved to: ${file.absolutePath}")
+            // Rename temp file to final file
+            if (tempFile.renameTo(finalFile)) {
+                Log.d(TAG, "✅ Download complete and renamed: $actualFileName")
+                
+                // Ensure file has read permissions
+                try {
+                    finalFile.setReadable(true, false)
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Could not set read permissions: ${e.message}")
+                }
+                
                 return@withContext true
             } else {
-                Log.e(TAG, "❌ Download incomplete: $actualFileName - Size: ${finalSize} bytes (Expected: $fileSize), Readable: $canRead")
-                if (file.exists()) {
-                    file.delete()
-                }
+                Log.e(TAG, "❌ Failed to rename temp file to final file: $actualFileName")
                 return@withContext false
             }
 
