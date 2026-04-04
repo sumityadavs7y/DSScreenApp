@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
         // Request battery optimization exemption
         requestBatteryOptimizationExemption()
         
-        // Load and apply saved rotation asynchronously
+        // Load saved playback rotation; activity uses sensor only when AUTO
         loadAndApplySavedRotation()
         
         // Load saved display mode
@@ -257,6 +257,7 @@ class MainActivity : ComponentActivity() {
                                         playlist = s.playlist,
                                         displayMode = currentDisplayModeValue,
                                         customDisplayModes = customDisplayModesValue,
+                                        contentRotation = currentRotationValue,
                                         onBack = { showStats = true },
                                         onError = { videoName, error ->
                                             viewModel.reportPlaybackError(videoName, error)
@@ -276,13 +277,8 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "▶️ MainActivity onResume")
         hideSystemUI()
         
-        // Re-apply rotation to prevent device from overriding it
         lifecycleScope.launch {
-            val savedRotation = _currentRotation.value
-            if (savedRotation != "AUTO") {
-                Log.d(TAG, "🔄 Re-applying rotation on resume: $savedRotation")
-                applyRotation(savedRotation)
-            }
+            applyActivityOrientationPolicy(_currentRotation.value)
         }
     }
 
@@ -290,11 +286,7 @@ class MainActivity : ComponentActivity() {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
             hideSystemUI()
-            // Enforce rotation when window gains focus (handles system dialogs/interruptions)
-            val savedRotation = _currentRotation.value
-            if (savedRotation != "AUTO") {
-                applyRotation(savedRotation)
-            }
+            applyActivityOrientationPolicy(_currentRotation.value)
         }
     }
 
@@ -359,7 +351,7 @@ class MainActivity : ComponentActivity() {
             val savedRotation = dataStoreManager.screenRotation.first() ?: "AUTO"
             Log.d(TAG, "🔄 [ASYNC] Loading saved rotation: $savedRotation")
             _currentRotation.value = savedRotation
-            applyRotation(savedRotation)
+            applyActivityOrientationPolicy(savedRotation)
         }
     }
 
@@ -422,8 +414,7 @@ class MainActivity : ComponentActivity() {
             // Update StateFlow immediately for UI
             _currentRotation.value = rotation
             
-            // Apply rotation to activity
-            applyRotation(rotation)
+            applyActivityOrientationPolicy(rotation)
             
             // Save to DataStore for persistence
             dataStoreManager.saveScreenRotation(rotation)
@@ -432,23 +423,18 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Apply rotation to the activity
+     * Fixed playback angles are applied in [com.logicalvalley.digitalSignage.ui.player.PlayerScreen]
+     * via Compose; the activity stays unlocked unless the user chose sensor (AUTO).
      */
-    private fun applyRotation(rotation: String) {
-        val orientation = when (rotation) {
-            "0" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            "90" -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            "180" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
-            "270" -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-            "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR // Follow device sensor
-            else -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+    private fun applyActivityOrientationPolicy(rotation: String) {
+        val orientation = when (rotation.trim()) {
+            "AUTO" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
-        
-        // Apply orientation immediately on main thread
         runOnUiThread {
             if (requestedOrientation != orientation) {
                 requestedOrientation = orientation
-                Log.d(TAG, "🔄 Applied orientation: $rotation (${getOrientationName(orientation)})")
+                Log.d(TAG, "🔄 Activity orientation policy: $rotation -> ${getOrientationName(orientation)}")
             }
         }
     }

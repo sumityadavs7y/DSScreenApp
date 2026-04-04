@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -31,11 +32,21 @@ import com.logicalvalley.digitalSignage.util.SSLConfig
 import kotlinx.coroutines.delay
 import java.io.File
 
+/** Maps settings rotation ("AUTO", "0"…"270") to degrees applied to video/image only. */
+internal fun playbackRotationDegrees(rotation: String): Float {
+    val key = rotation.trim()
+    if (key == "AUTO") return 0f
+    val deg = key.toIntOrNull() ?: return 0f
+    val n = deg % 360
+    return (if (n < 0) n + 360 else n).toFloat()
+}
+
 @Composable
 fun PlayerScreen(
     playlist: Playlist,
     displayMode: String,
     customDisplayModes: Map<String, String>,
+    contentRotation: String,
     onBack: () -> Unit,
     onError: (String, String) -> Unit
 ) {
@@ -59,12 +70,14 @@ fun PlayerScreen(
             displayMode
         }
         
+        val rotationDeg = playbackRotationDegrees(contentRotation)
         if (isVideo) {
             VideoPlayer(
                 item = currentItem,
                 localFile = localFile,
                 playKey = playKey,
                 displayMode = actualDisplayMode,
+                rotationDegrees = rotationDeg,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                     playCounter++
@@ -79,6 +92,7 @@ fun PlayerScreen(
                 localFile = localFile,
                 playKey = playKey,
                 displayMode = actualDisplayMode,
+                rotationDegrees = rotationDeg,
                 onFinished = {
                     currentIndex = (currentIndex + 1) % playlist.items.size
                     playCounter++
@@ -97,6 +111,7 @@ fun ImagePlayer(
     localFile: File?,
     playKey: String,
     displayMode: String,
+    rotationDegrees: Float,
     onFinished: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -120,26 +135,42 @@ fun ImagePlayer(
         else -> ContentScale.Fit
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        AsyncImage(
-            model = imageUrl,
-            contentDescription = null,
+    // For 90°/270°, lay out media in a swapped (portrait) box so FIT/FILL/STRETCH use the
+    // same aspect logic as after rotation. Uniform graphicsLayer scale broke those modes.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val quarterTurn = kotlin.math.abs(rotationDegrees % 180f - 90f) < 0.01f
+        val layerW = if (quarterTurn) maxHeight else maxWidth
+        val layerH = if (quarterTurn) maxWidth else maxHeight
+        Box(
             modifier = Modifier.fillMaxSize(),
-            contentScale = contentScale,
-            onError = { result ->
-                val error = result.result.throwable.message ?: "Failed to load image"
-                Log.e("ImagePlayer", "❌ Error loading image: $error")
-                errorMessage = error
-                hasError = true
-                onError(error)
-            }
-        )
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(layerW, layerH)
+                    .graphicsLayer { rotationZ = rotationDegrees }
+            ) {
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = contentScale,
+                    onError = { result ->
+                        val error = result.result.throwable.message ?: "Failed to load image"
+                        Log.e("ImagePlayer", "❌ Error loading image: $error")
+                        errorMessage = error
+                        hasError = true
+                        onError(error)
+                    }
+                )
 
-        if (hasError) {
-            ErrorDialog(
-                message = errorMessage,
-                onSkip = onFinished
-            )
+                if (hasError) {
+                    ErrorDialog(
+                        message = errorMessage,
+                        onSkip = onFinished
+                    )
+                }
+            }
         }
     }
 
@@ -158,6 +189,7 @@ fun VideoPlayer(
     localFile: File?,
     playKey: String,
     displayMode: String,
+    rotationDegrees: Float,
     onFinished: () -> Unit,
     onError: (String) -> Unit
 ) {
@@ -253,30 +285,44 @@ fun VideoPlayer(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = {
-                PlayerView(it).apply {
-                    player = exoPlayer
-                    useController = false
-                    resizeMode = playerResizeMode
-                }
-            },
-            update = {
-                it.player = exoPlayer
-                it.resizeMode = playerResizeMode
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val quarterTurn = kotlin.math.abs(rotationDegrees % 180f - 90f) < 0.01f
+        val layerW = if (quarterTurn) maxHeight else maxWidth
+        val layerH = if (quarterTurn) maxWidth else maxHeight
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(layerW, layerH)
+                    .graphicsLayer { rotationZ = rotationDegrees }
+            ) {
+                AndroidView(
+                    factory = {
+                        PlayerView(it).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode = playerResizeMode
+                        }
+                    },
+                    update = {
+                        it.player = exoPlayer
+                        it.resizeMode = playerResizeMode
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
 
-        if (hasError) {
-            ErrorDialog(
-                message = errorMessage,
-                onSkip = {
-                    hasError = false
-                    onFinished()
+                if (hasError) {
+                    ErrorDialog(
+                        message = errorMessage,
+                        onSkip = {
+                            hasError = false
+                            onFinished()
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 }

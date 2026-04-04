@@ -66,7 +66,7 @@ fun SettingsScreen(
                         color = Color.White
                     )
                     Text(
-                        text = "Display & Rotation Controls",
+                        text = "Display & playback rotation",
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -114,7 +114,7 @@ fun SettingsScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Screen Rotation",
+                                text = "Playback rotation",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White
                             )
@@ -404,11 +404,11 @@ fun SettingsScreen(
 
 private fun getRotationLabel(rotation: String): String {
     return when (rotation) {
-        "AUTO" -> "Auto (Device Setting)"
-        "0" -> "Portrait (0°)"
-        "90" -> "Landscape (90°)"
-        "180" -> "Reverse Portrait (180°)"
-        "270" -> "Reverse Landscape (270°)"
+        "AUTO" -> "Auto — no extra rotation; device can turn (sensor)"
+        "0" -> "0° — video & images upright"
+        "90" -> "90° — video & images rotated"
+        "180" -> "180° — video & images upside down"
+        "270" -> "270° — video & images rotated"
         else -> "Unknown"
     }
 }
