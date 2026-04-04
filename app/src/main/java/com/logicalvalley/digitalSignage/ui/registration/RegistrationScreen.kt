@@ -1,8 +1,11 @@
 package com.logicalvalley.digitalSignage.ui.registration
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -15,8 +18,6 @@ import androidx.tv.material3.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import coil.compose.AsyncImage
-
 import androidx.compose.ui.graphics.Color
 import com.logicalvalley.digitalSignage.data.model.InitRegistrationData
 import android.util.Log
@@ -71,185 +72,205 @@ fun RegistrationScreen(
         }
     }
 
-    Column(
+    // LazyColumn (not verticalScroll Column): on TV, D-pad Up must move focus through list items;
+    // scroll + non-focusable children often scrolls down only and traps focus on buttons.
+    val listState = rememberLazyListState()
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black),
-        verticalArrangement = Arrangement.Center,
+        state = listState,
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        androidx.compose.foundation.Image(
-            painter = painterResource(id = R.drawable.logo),
-            contentDescription = "App Logo",
-            modifier = Modifier.size(120.dp)
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Text(
-            text = if (showQr) "Scan QR to Register" else "Enter Playlist Code",
-            style = MaterialTheme.typography.headlineMedium,
-            color = Color.White
-        )
-        
-        Spacer(modifier = Modifier.height(24.dp))
+        item {
+            androidx.compose.foundation.Image(
+                painter = painterResource(id = R.drawable.logo),
+                contentDescription = "App Logo",
+                modifier = Modifier.size(96.dp)
+            )
+        }
+        item { Spacer(modifier = Modifier.height(16.dp)) }
+        item {
+            Text(
+                text = if (showQr) "Scan QR to Register" else "Enter Playlist Code",
+                style = MaterialTheme.typography.headlineMedium,
+                color = Color.White,
+                modifier = Modifier.focusable()
+            )
+        }
+        item { Spacer(modifier = Modifier.height(16.dp)) }
 
         if (showQr) {
-            Box(
-                modifier = Modifier
-                    .size(300.dp)
-                    .background(Color.White, shape = MaterialTheme.shapes.medium),
-                contentAlignment = Alignment.Center
-            ) {
-                if (qrData != null && qrBitmap != null) {
-                    // Use key to force recomposition when QR changes
-                    key(qrData.sessionToken) {
-                        SubcomposeAsyncImage(
-                            model = ImageRequest.Builder(context)
-                                .data(qrBitmap)
-                                .memoryCacheKey(qrData.sessionToken)
-                                .diskCacheKey(qrData.sessionToken)
-                                .crossfade(true)
-                                .build(),
-                            contentDescription = "Registration QR Code",
-                            modifier = Modifier.fillMaxSize().padding(16.dp),
-                            contentScale = ContentScale.Fit,
-                            loading = {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            item {
+                Box(
+                    modifier = Modifier
+                        .size(260.dp)
+                        .focusable()
+                        .background(Color.White, shape = MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (qrData != null && qrBitmap != null) {
+                        key(qrData.sessionToken) {
+                            SubcomposeAsyncImage(
+                                model = ImageRequest.Builder(context)
+                                    .data(qrBitmap)
+                                    .memoryCacheKey(qrData.sessionToken)
+                                    .diskCacheKey(qrData.sessionToken)
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = "Registration QR Code",
+                                modifier = Modifier.fillMaxSize().padding(16.dp),
+                                contentScale = ContentScale.Fit,
+                                loading = {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                                    }
+                                },
+                                error = {
+                                    val errorMsg = it.result.throwable.message ?: "Unknown Error"
+                                    Log.e("RegistrationScreen", "❌ QR Image Load Failed: $errorMsg")
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier.padding(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Warning,
+                                            contentDescription = null,
+                                            tint = Color.Red,
+                                            modifier = Modifier.size(48.dp)
+                                        )
+                                        Text(
+                                            "Load Failed",
+                                            color = Color.Red,
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                },
+                                onSuccess = {
+                                    Log.d("RegistrationScreen", "✅ QR Image Rendered - Session: ${qrData.sessionToken}")
                                 }
-                            },
-                            error = {
-                                val errorMsg = it.result.throwable.message ?: "Unknown Error"
-                                Log.e("RegistrationScreen", "❌ QR Image Load Failed: $errorMsg")
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Warning,
-                                        contentDescription = null,
-                                        tint = Color.Red,
-                                        modifier = Modifier.size(48.dp)
-                                    )
-                                    Text(
-                                        "Load Failed",
-                                        color = Color.Red,
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            },
-                            onSuccess = { 
-                                Log.d("RegistrationScreen", "✅ QR Image Rendered - Session: ${qrData.sessionToken}") 
-                            }
-                        )
+                            )
+                        }
+                    } else if (qrData != null && qrBitmap == null) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        CircularProgressIndicator()
                     }
-                } else if (qrData != null && qrBitmap == null) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                } else {
-                    CircularProgressIndicator()
                 }
             }
-            
-            if (qrData == null) {
-                Spacer(modifier = Modifier.height(16.dp))
+            item { Spacer(modifier = Modifier.height(12.dp)) }
+            item {
                 Text(
-                    text = "Initializing session...",
+                    text = if (qrData == null) {
+                        "Initializing session..."
+                    } else {
+                        "Scan this code with your phone to register"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray
-                )
-            } else {
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Scan this code with your phone to register",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.LightGray
+                    color = if (qrData == null) Color.Gray else Color.LightGray,
+                    modifier = Modifier.focusable()
                 )
             }
         } else {
-            Box(
-                modifier = Modifier.width(350.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { 
-                        if (it.length <= 5) {
-                            code = it
-                            if (code.length == 5) {
-                                onRegister(code)
+            item {
+                Box(
+                    modifier = Modifier.width(350.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = {
+                            if (it.length <= 5) {
+                                code = it
+                                if (code.length == 5) {
+                                    onRegister(code)
+                                }
                             }
-                        }
-                    },
-                    textStyle = MaterialTheme.typography.headlineLarge.copy(
-                        textAlign = TextAlign.Center,
-                        letterSpacing = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    singleLine = true,
-                    placeholder = {
-                        Text(
-                            "_____",
-                            modifier = Modifier.fillMaxWidth(),
+                        },
+                        textStyle = MaterialTheme.typography.headlineLarge.copy(
                             textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.headlineLarge.copy(letterSpacing = 12.sp)
-                        )
-                    },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = Color.Gray,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = MaterialTheme.colorScheme.primary
-                    ),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                            letterSpacing = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        singleLine = true,
+                        placeholder = {
+                            Text(
+                                "_____",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.headlineLarge.copy(letterSpacing = 12.sp)
+                            )
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = Color.Gray,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = MaterialTheme.colorScheme.primary
+                        ),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
         }
 
         if (error != null) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = error,
-                color = MaterialTheme.colorScheme.error,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
-            )
+            item { Spacer(modifier = Modifier.height(16.dp)) }
+            item {
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(horizontal = 32.dp)
+                        .focusable()
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Row {
-            Button(
-                onClick = { showQr = !showQr }
+        item { Spacer(modifier = Modifier.height(24.dp)) }
+        item {
+            Row(
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(if (showQr) "Use Code Instead" else "Use QR Instead")
-            }
-            
-            if (showQr) {
-                Spacer(modifier = Modifier.width(16.dp))
-                Button(onClick = onRefreshQr) {
-                    Text("Refresh QR")
-                }
-            } else {
-                Spacer(modifier = Modifier.width(16.dp))
                 Button(
-                    onClick = { if (code.length == 5) onRegister(code) },
-                    enabled = code.length == 5
+                    onClick = { showQr = !showQr }
                 ) {
-                    Text("Register Device")
+                    Text(if (showQr) "Use Code Instead" else "Use QR Instead")
+                }
+
+                if (showQr) {
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Button(onClick = onRefreshQr) {
+                        Text("Refresh QR")
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Button(
+                        onClick = { if (code.length == 5) onRegister(code) },
+                        enabled = code.length == 5
+                    ) {
+                        Text("Register Device")
+                    }
                 }
             }
         }
-        
+
         if (!showQr) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Device will auto-register after 5 characters",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
+            item { Spacer(modifier = Modifier.height(8.dp)) }
+            item {
+                Text(
+                    text = "Device will auto-register after 5 characters",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.focusable()
+                )
+            }
         }
+
+        item { Spacer(modifier = Modifier.height(24.dp)) }
     }
 }
